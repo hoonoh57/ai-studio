@@ -1,10 +1,13 @@
 import { create } from 'zustand';
 import type { Project, Track, Clip, Asset, TrackType, Transform } from '@/types/project';
+import type { SkillLevel, EditorTab, PanelId, SkillConfig } from '@/types/project';
+import { SKILL_CONFIGS } from '@/types/project';
 
 let uidCounter = 0;
 const uid = (prefix: string) => `${prefix}_${Date.now()}_${++uidCounter}`;
 
 interface EditorState {
+  // Project data
   project: Project;
   currentTime: number;
   isPlaying: boolean;
@@ -14,7 +17,12 @@ interface EditorState {
   snapEnabled: boolean;
   snapInterval: number;
 
-  // Actions
+  // Skill level & UI state
+  skillLevel: SkillLevel;
+  activeTab: EditorTab;
+  activePanel: PanelId;
+
+  // Project actions
   setProjectName: (name: string) => void;
   addAsset: (asset: Omit<Asset, 'id'>) => Asset;
   removeAsset: (id: string) => void;
@@ -24,14 +32,28 @@ interface EditorState {
   updateClip: (clipId: string, updates: Partial<Clip>) => void;
   removeClip: (clipId: string) => void;
   splitClip: (clipId: string, time: number) => void;
+
+  // Playback actions
   setCurrentTime: (time: number) => void;
   setIsPlaying: (playing: boolean) => void;
   togglePlay: () => void;
+
+  // Selection actions
   selectClip: (clipId: string | null) => void;
   selectTrack: (trackId: string | null) => void;
+
+  // Timeline UI actions
   setZoom: (zoom: number) => void;
   toggleSnap: () => void;
   recalcDuration: () => void;
+
+  // Skill level actions
+  setSkillLevel: (level: SkillLevel) => void;
+  setActiveTab: (tab: EditorTab) => void;
+  setActivePanel: (panel: PanelId) => void;
+  getSkillConfig: () => SkillConfig;
+
+  // Export
   exportProject: () => string;
 }
 
@@ -52,6 +74,7 @@ const defaultProject: Project = {
 };
 
 export const useEditorStore = create<EditorState>((set, get) => ({
+  // ── Initial state ──
   project: defaultProject,
   currentTime: 0,
   isPlaying: false,
@@ -60,7 +83,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   zoom: 1,
   snapEnabled: true,
   snapInterval: 0.5,
+  skillLevel: 'intermediate',
+  activeTab: 'edit',
+  activePanel: 'media',
 
+  // ── Project actions ──
   setProjectName: (name) =>
     set((s) => ({ project: { ...s.project, name } })),
 
@@ -164,11 +191,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
   },
 
+  // ── Playback actions ──
   setCurrentTime: (time) => set({ currentTime: Math.max(0, time) }),
   setIsPlaying: (playing) => set({ isPlaying: playing }),
   togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
+
+  // ── Selection actions ──
   selectClip: (clipId) => set({ selectedClipId: clipId }),
   selectTrack: (trackId) => set({ selectedTrackId: trackId }),
+
+  // ── Timeline UI actions ──
   setZoom: (zoom) => set({ zoom: Math.max(0.1, Math.min(10, zoom)) }),
   toggleSnap: () => set((s) => ({ snapEnabled: !s.snapEnabled })),
 
@@ -183,5 +215,38 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({ project: { ...s.project, duration: maxEnd + 10 } }));
   },
 
+  // ── Skill level actions ──
+  setSkillLevel: (level) => {
+    const config = SKILL_CONFIGS[level];
+    const currentTab = get().activeTab;
+    const currentPanel = get().activePanel;
+    set({
+      skillLevel: level,
+      activeTab: config.visibleTabs.includes(currentTab)
+        ? currentTab
+        : config.visibleTabs[0],
+      activePanel: config.visiblePanels.includes(currentPanel)
+        ? currentPanel
+        : config.visiblePanels[0],
+    });
+  },
+
+  setActiveTab: (tab) => {
+    const config = SKILL_CONFIGS[get().skillLevel];
+    if (config.visibleTabs.includes(tab)) {
+      set({ activeTab: tab });
+    }
+  },
+
+  setActivePanel: (panel) => {
+    const config = SKILL_CONFIGS[get().skillLevel];
+    if (config.visiblePanels.includes(panel)) {
+      set({ activePanel: panel });
+    }
+  },
+
+  getSkillConfig: () => SKILL_CONFIGS[get().skillLevel],
+
+  // ── Export ──
   exportProject: () => JSON.stringify(get().project, null, 2),
 }));

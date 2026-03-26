@@ -99,7 +99,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
-    padding: '0 6px',
+    padding: '0 8px',
     fontSize: 10,
     color: '#fff',
     fontWeight: 500,
@@ -107,6 +107,30 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap',
     textOverflow: 'ellipsis',
     userSelect: 'none',
+  },
+  clipLabel: {
+    flex: 1,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    pointerEvents: 'none',
+  },
+  handleLeft: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 6,
+    cursor: 'col-resize',
+    borderRadius: '4px 0 0 4px',
+  },
+  handleRight: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 6,
+    cursor: 'col-resize',
+    borderRadius: '0 4px 4px 0',
   },
   playhead: {
     position: 'absolute',
@@ -134,12 +158,17 @@ export default function TimelinePanel() {
   const removeClip = useEditorStore((s) => s.removeClip);
   const splitClip = useEditorStore((s) => s.splitClip);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ clipId: string; startX: number; origStart: number } | null>(null);
+  const dragRef = useRef<{
+    type: 'move' | 'trim-left' | 'trim-right';
+    clipId: string;
+    startX: number;
+    origStart: number;
+    origEnd: number;
+  } | null>(null);
 
   const pps = PIXELS_PER_SECOND_BASE * zoom;
   const totalWidth = project.duration * pps;
 
-  // Keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
@@ -153,7 +182,9 @@ export default function TimelinePanel() {
           if (selectedClipId) removeClip(selectedClipId);
           break;
         case 'KeyC':
-          if (selectedClipId) splitClip(selectedClipId, useEditorStore.getState().currentTime);
+          if (selectedClipId) {
+            splitClip(selectedClipId, useEditorStore.getState().currentTime);
+          }
           break;
         case 'ArrowLeft':
           setCurrentTime(Math.max(0, currentTime - 1 / project.fps));
@@ -167,71 +198,98 @@ export default function TimelinePanel() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedClipId, currentTime]);
 
-  // Drop handler
-  const handleDrop = useCallback((e: React.DragEvent, trackId: string) => {
-    e.preventDefault();
-    const assetId = e.dataTransfer.getData('assetId');
-    if (!assetId) return;
-    const asset = project.assets.find((a) => a.id === assetId);
-    if (!asset) return;
+  const handleDrop = useCallback(
+    (e: React.DragEvent, trackId: string) => {
+      e.preventDefault();
+      const assetId = e.dataTransfer.getData('assetId');
+      if (!assetId) return;
+      const asset = project.assets.find((a) => a.id === assetId);
+      if (!asset) return;
 
-    const rect = e.currentTarget.getBoundingClientRect();
-    const scrollLeft = scrollRef.current?.scrollLeft || 0;
-    const x = e.clientX - rect.left + scrollLeft;
-    const startTime = Math.max(0, x / pps);
+      const rect = e.currentTarget.getBoundingClientRect();
+      const scrollLeft = scrollRef.current?.scrollLeft || 0;
+      const x = e.clientX - rect.left + scrollLeft;
+      const startTime = Math.max(0, x / pps);
 
-    addClip(trackId, {
-      assetId,
-      timelineStart: startTime,
-      timelineEnd: startTime + asset.duration,
-      sourceStart: 0,
-      sourceEnd: asset.duration,
-      transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 },
-      opacity: 1,
-      blendMode: 'normal',
-      speed: 1,
-      filters: [],
-      locked: false,
-    });
-  }, [project.assets, pps, addClip]);
+      addClip(trackId, {
+        assetId,
+        timelineStart: startTime,
+        timelineEnd: startTime + asset.duration,
+        sourceStart: 0,
+        sourceEnd: asset.duration,
+        transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 },
+        opacity: 1,
+        blendMode: 'normal',
+        speed: 1,
+        filters: [],
+        locked: false,
+      });
+    },
+    [project.assets, pps, addClip],
+  );
 
-  // Clip drag
-  const handleClipMouseDown = useCallback((e: React.MouseEvent, clipId: string, origStart: number) => {
-    e.stopPropagation();
-    selectClip(clipId);
-    dragRef.current = { clipId, startX: e.clientX, origStart };
+  const startDrag = useCallback(
+    (
+      e: React.MouseEvent,
+      type: 'move' | 'trim-left' | 'trim-right',
+      clipId: string,
+      origStart: number,
+      origEnd: number,
+    ) => {
+      e.stopPropagation();
+      e.preventDefault();
+      selectClip(clipId);
+      dragRef.current = { type, clipId, startX: e.clientX, origStart, origEnd };
 
-    const onMove = (ev: MouseEvent) => {
-      if (!dragRef.current) return;
-      const dx = ev.clientX - dragRef.current.startX;
-      const dt = dx / pps;
-      const newStart = Math.max(0, dragRef.current.origStart + dt);
-      const state = useEditorStore.getState();
-      const clip = state.project.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId);
-      if (!clip) return;
-      const duration = clip.timelineEnd - clip.timelineStart;
-      updateClip(clipId, { timelineStart: newStart, timelineEnd: newStart + duration });
-    };
+      const onMove = (ev: MouseEvent) => {
+        if (!dragRef.current) return;
+        const d = dragRef.current;
+        const dx = ev.clientX - d.startX;
+        const dt = dx / pps;
 
-    const onUp = () => {
-      dragRef.current = null;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
+        if (d.type === 'move') {
+          const newStart = Math.max(0, d.origStart + dt);
+          const duration = d.origEnd - d.origStart;
+          updateClip(d.clipId, {
+            timelineStart: newStart,
+            timelineEnd: newStart + duration,
+          });
+        } else if (d.type === 'trim-left') {
+          const newStart = Math.max(0, d.origStart + dt);
+          if (newStart < d.origEnd - 0.1) {
+            updateClip(d.clipId, { timelineStart: newStart });
+          }
+        } else if (d.type === 'trim-right') {
+          const newEnd = d.origEnd + dt;
+          if (newEnd > d.origStart + 0.1) {
+            updateClip(d.clipId, { timelineEnd: newEnd });
+          }
+        }
+      };
 
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }, [pps, selectClip, updateClip]);
+      const onUp = () => {
+        dragRef.current = null;
+        useEditorStore.getState().recalcDuration();
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
 
-  // Ruler click
-  const handleRulerClick = useCallback((e: React.MouseEvent) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const scrollLeft = scrollRef.current?.scrollLeft || 0;
-    const x = e.clientX - rect.left + scrollLeft;
-    setCurrentTime(Math.max(0, x / pps));
-  }, [pps, setCurrentTime]);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    },
+    [pps, selectClip, updateClip],
+  );
 
-  // Ruler ticks
+  const handleRulerClick = useCallback(
+    (e: React.MouseEvent) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const scrollLeft = scrollRef.current?.scrollLeft || 0;
+      const x = e.clientX - rect.left + scrollLeft;
+      setCurrentTime(Math.max(0, x / pps));
+    },
+    [pps, setCurrentTime],
+  );
+
   const rulerTicks = [];
   const tickInterval = zoom >= 2 ? 1 : zoom >= 0.5 ? 5 : 10;
   for (let t = 0; t <= project.duration; t += tickInterval) {
@@ -253,23 +311,25 @@ export default function TimelinePanel() {
         }}
       >
         {Math.floor(t / 60)}:{(t % 60).toString().padStart(2, '0')}
-      </div>
+      </div>,
     );
   }
-
-  // Track label top offset
-  let labelTop = 24; // after ruler
 
   return (
     <div style={styles.panel}>
       <div style={styles.toolbar}>
         <button
-          style={{ ...styles.toolBtn, ...(snapEnabled ? styles.toolBtnActive : {}) }}
+          style={{
+            ...styles.toolBtn,
+            ...(snapEnabled ? styles.toolBtnActive : {}),
+          }}
           onClick={toggleSnap}
         >
           🧲 Snap
         </button>
-        <button style={styles.toolBtn} title="Split (C)">✂️ Split</button>
+        <button style={styles.toolBtn} title="Split (C)">
+          ✂ Split
+        </button>
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Zoom</span>
         <input
@@ -283,29 +343,42 @@ export default function TimelinePanel() {
         />
       </div>
       <div style={styles.body}>
-        {/* Track Labels */}
         <div style={styles.trackLabels}>
-          <div style={{ height: 24, borderBottom: '1px solid var(--border)' }} />
+          <div
+            style={{ height: 24, borderBottom: '1px solid var(--border)' }}
+          />
           {project.tracks.map((track) => (
             <div
               key={track.id}
               style={{ ...styles.trackLabel, height: track.height }}
             >
-              <span>{track.type === 'video' ? '🎬' : track.type === 'audio' ? '🎵' : '📝'}</span>
+              <span>
+                {track.type === 'video'
+                  ? '🎬'
+                  : track.type === 'audio'
+                    ? '🎵'
+                    : '✏️'}
+              </span>
               <span>{track.name}</span>
             </div>
           ))}
         </div>
 
-        {/* Scrollable Area */}
         <div style={styles.scrollArea} ref={scrollRef}>
-          {/* Ruler */}
-          <div style={{ ...styles.ruler, width: totalWidth }} onClick={handleRulerClick}>
+          <div
+            style={{ ...styles.ruler, width: totalWidth }}
+            onClick={handleRulerClick}
+          >
             {rulerTicks}
           </div>
 
-          {/* Tracks */}
-          <div style={{ ...styles.tracksContainer, width: totalWidth, position: 'relative' }}>
+          <div
+            style={{
+              ...styles.tracksContainer,
+              width: totalWidth,
+              position: 'relative',
+            }}
+          >
             {project.tracks.map((track) => (
               <div
                 key={track.id}
@@ -316,7 +389,10 @@ export default function TimelinePanel() {
                 {track.clips.map((clip) => {
                   const left = clip.timelineStart * pps;
                   const width = (clip.timelineEnd - clip.timelineStart) * pps;
-                  const asset = project.assets.find((a) => a.id === clip.assetId);
+                  const asset = project.assets.find(
+                    (a) => a.id === clip.assetId,
+                  );
+                  const isSelected = selectedClipId === clip.id;
                   return (
                     <div
                       key={clip.id}
@@ -325,22 +401,77 @@ export default function TimelinePanel() {
                         left,
                         width,
                         height: track.height - 8,
-                        background: selectedClipId === clip.id
+                        background: isSelected
                           ? 'var(--accent-hover)'
                           : clipColors[track.type] || 'var(--clip-video)',
-                        border: selectedClipId === clip.id ? '2px solid #fff' : '1px solid rgba(255,255,255,0.15)',
+                        border: isSelected
+                          ? '2px solid #fff'
+                          : '1px solid rgba(255,255,255,0.15)',
                       }}
-                      onClick={(e) => { e.stopPropagation(); selectClip(clip.id); }}
-                      onMouseDown={(e) => handleClipMouseDown(e, clip.id, clip.timelineStart)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        selectClip(clip.id);
+                      }}
+                      onMouseDown={(e) =>
+                        startDrag(
+                          e,
+                          'move',
+                          clip.id,
+                          clip.timelineStart,
+                          clip.timelineEnd,
+                        )
+                      }
                     >
-                      {asset?.name || 'Clip'}
+                      {/* 왼쪽 트림 핸들 */}
+                      <div
+                        style={styles.handleLeft}
+                        onMouseDown={(e) =>
+                          startDrag(
+                            e,
+                            'trim-left',
+                            clip.id,
+                            clip.timelineStart,
+                            clip.timelineEnd,
+                          )
+                        }
+                        onMouseEnter={(e) =>
+                          (e.currentTarget.style.background =
+                            'rgba(255,255,255,0.3)')
+                        }
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.background = 'transparent')
+                        }
+                      />
+                      {/* 클립 이름 */}
+                      <span style={styles.clipLabel}>
+                        {asset?.name || 'Clip'}
+                      </span>
+                      {/* 오른쪽 트림 핸들 */}
+                      <div
+                        style={styles.handleRight}
+                        onMouseDown={(e) =>
+                          startDrag(
+                            e,
+                            'trim-right',
+                            clip.id,
+                            clip.timelineStart,
+                            clip.timelineEnd,
+                          )
+                        }
+                        onMouseEnter={(e) =>
+                          (e.currentTarget.style.background =
+                            'rgba(255,255,255,0.3)')
+                        }
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.background = 'transparent')
+                        }
+                      />
                     </div>
                   );
                 })}
               </div>
             ))}
 
-            {/* Playhead */}
             <div
               style={{
                 ...styles.playhead,

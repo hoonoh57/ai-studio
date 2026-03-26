@@ -20,7 +20,8 @@ node_modules/
 *.njsproj
 *.sln
 *.sw?
-*.md
-ai-studio-design-v4.html
+ai-studio-design-v4.
+history.md
 # OS specific
 .DS_Store
+ai-studio-design-v4.html 

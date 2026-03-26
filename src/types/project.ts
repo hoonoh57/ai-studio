@@ -70,3 +70,114 @@ export interface Project {
   tracks: Track[];
   assets: Asset[];
 }
+
+// === Skill Level System ===
+export type SkillLevel = 'beginner' | 'intermediate' | 'advanced' | 'expert';
+
+export type EditorTab = 'ai-creator' | 'edit' | 'color' | 'audio' | 'ai-workflow' | 'export';
+
+export type PanelId = 'media' | 'text' | 'audio' | 'effects' | 'ai' | 'sticker' | 'transition';
+
+export interface SkillConfig {
+  readonly level: SkillLevel;
+  readonly label: string;
+  readonly description: string;
+  readonly visibleTabs: readonly EditorTab[];
+  readonly visiblePanels: readonly PanelId[];
+  readonly showTimeline: boolean;
+  readonly showProperties: boolean;
+  readonly showIconBar: boolean;
+  readonly maxTracks: number;
+  readonly showKeyframes: boolean;
+  readonly showEffectsStack: boolean;
+  readonly showSafeZone: boolean;
+  readonly showWaveform: boolean;
+  readonly showThumbnailStrip: boolean;
+  readonly showAdvancedTrim: boolean;
+  readonly showGraphEditor: boolean;
+  readonly showNodeColor: boolean;
+  readonly showFFmpegCustom: boolean;
+}
+
+export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
+  beginner: {
+    level: 'beginner',
+    label: '초급',
+    description: 'AI가 영상을 만들어줍니다',
+    visibleTabs: ['ai-creator'],
+    visiblePanels: ['ai'],
+    showTimeline: false,
+    showProperties: false,
+    showIconBar: false,
+    maxTracks: 2,
+    showKeyframes: false,
+    showEffectsStack: false,
+    showSafeZone: false,
+    showWaveform: false,
+    showThumbnailStrip: false,
+    showAdvancedTrim: false,
+    showGraphEditor: false,
+    showNodeColor: false,
+    showFFmpegCustom: false,
+  },
+  intermediate: {
+    level: 'intermediate',
+    label: '중급',
+    description: 'CapCut처럼 쉽게 편집합니다',
+    visibleTabs: ['edit', 'ai-creator'],
+    visiblePanels: ['media', 'text', 'ai'],
+    showTimeline: true,
+    showProperties: true,
+    showIconBar: true,
+    maxTracks: 6,
+    showKeyframes: false,
+    showEffectsStack: false,
+    showSafeZone: false,
+    showWaveform: false,
+    showThumbnailStrip: false,
+    showAdvancedTrim: false,
+    showGraphEditor: false,
+    showNodeColor: false,
+    showFFmpegCustom: false,
+  },
+  advanced: {
+    level: 'advanced',
+    label: '고급',
+    description: 'Premiere급 전문 편집',
+    visibleTabs: ['edit', 'color', 'audio', 'ai-creator', 'export'],
+    visiblePanels: ['media', 'text', 'audio', 'effects', 'ai', 'sticker', 'transition'],
+    showTimeline: true,
+    showProperties: true,
+    showIconBar: true,
+    maxTracks: 20,
+    showKeyframes: true,
+    showEffectsStack: true,
+    showSafeZone: true,
+    showWaveform: true,
+    showThumbnailStrip: true,
+    showAdvancedTrim: true,
+    showGraphEditor: false,
+    showNodeColor: false,
+    showFFmpegCustom: false,
+  },
+  expert: {
+    level: 'expert',
+    label: '초고급',
+    description: 'DaVinci급 완전 제어',
+    visibleTabs: ['edit', 'color', 'audio', 'ai-workflow', 'ai-creator', 'export'],
+    visiblePanels: ['media', 'text', 'audio', 'effects', 'ai', 'sticker', 'transition'],
+    showTimeline: true,
+    showProperties: true,
+    showIconBar: true,
+    maxTracks: 99,
+    showKeyframes: true,
+    showEffectsStack: true,
+    showSafeZone: true,
+    showWaveform: true,
+    showThumbnailStrip: true,
+    showAdvancedTrim: true,
+    showGraphEditor: true,
+    showNodeColor: true,
+    showFFmpegCustom: true,
+  },
+};
