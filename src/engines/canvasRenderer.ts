@@ -130,6 +130,7 @@ export interface RenderFrameParams {
     transition: {
         definitionId: string;
         progress: number;
+        duration: number; // ★ ADD
     } | null;
 }
 
@@ -137,58 +138,76 @@ export function renderFrame(params: RenderFrameParams): void {
     const { canvas, ctx, width, height, fps, currentTime,
         videoA, videoB, imageA, activeEffects, transition } = params;
 
-    // 1. Canvas 크기 맞추기
-    if (canvas.width !== width) canvas.width = width;
-    if (canvas.height !== height) canvas.height = height;
+    const w = canvas.width;
+    const h = canvas.height;
 
-    // 2. 이전 프레임 유지를 위해 clearRect 대신 조건부 클리어
-    //    → 비디오 프레임이 준비된 경우에만 새로 그림
-    //    → 미준비 시 이전 프레임 유지 = 검은 프레임 방지
-    const inputA: CanvasImageSource | null =
-        videoA && isVideoReady(videoA) ? videoA :
-            imageA ?? null;
+    // 1. 소스 준비 상태 확인
+    const srcA: CanvasImageSource | null =
+        (videoA && isVideoReady(videoA)) ? videoA :
+            imageA ? imageA : null;
 
-    const inputB: CanvasImageSource | null =
-        videoB && isVideoReady(videoB) ? videoB : null;
+    const srcB: CanvasImageSource | null =
+        (videoB && isVideoReady(videoB)) ? videoB : null;
 
-    // 소스가 하나도 없으면 이전 프레임 유지
-    if (!inputA && !transition) return;
-
-    // 3. Canvas 클리어
-    ctx.clearRect(0, 0, width, height);
-
-    // 4. 전환 모드
-    if (transition && transition.progress >= 0) {
+    // ── 전환 구간 ──
+    if (transition && transition.definitionId) {
         const def = effectRegistry.get(transition.definitionId);
-        if (def && inputA && inputB) {
-            // 정상: 두 소스 모두 준비됨 → 전환 효과 렌더링
-            const renderCtx: EffectRenderContext = {
-                time: 0,
-                progress: transition.progress,
-                params: {},
-                canvas, ctx,
-                inputA, inputB,
-                width, height, fps,
-            };
-            const result = def.render(renderCtx);
-            if (result.type === 'canvas') {
-                result.draw(ctx);
+
+        if (def && srcA && srcB) {
+            // 정상: 두 소스 + 효과 정의 모두 있음
+            try {
+                ctx.clearRect(0, 0, w, h);
+                def.render({
+                    time: currentTime,
+                    progress: transition.progress,
+                    params: { progress: transition.progress, duration: transition.duration },
+                    canvas, ctx,
+                    inputA: srcA,
+                    inputB: srcB,
+                    width: w, height: h,
+                    fps: fps,
+                });
+            } catch (e) {
+                console.warn('[canvasRenderer] transition render error, fallback to dissolve:', e);
+                // 수동 dissolve 폴백
+                ctx.clearRect(0, 0, w, h);
+                ctx.globalAlpha = 1 - transition.progress;
+                ctx.drawImage(srcA, 0, 0, w, h);
+                ctx.globalAlpha = transition.progress;
+                ctx.drawImage(srcB, 0, 0, w, h);
+                ctx.globalAlpha = 1;
             }
-        } else if (inputA && !inputB) {
-            // 폴백: B가 아직 준비 안됨 → A만 그리기 (검은색 방지)
-            ctx.drawImage(inputA, 0, 0, width, height);
-        } else if (!inputA && inputB) {
-            // 폴백: A가 없으면 B만 그리기
-            ctx.drawImage(inputB, 0, 0, width, height);
+        } else if (srcA && !srcB) {
+            // B 미준비 → A만 표시 (검은색 방지)
+            ctx.clearRect(0, 0, w, h);
+            ctx.drawImage(srcA, 0, 0, w, h);
+        } else if (!srcA && srcB) {
+            // A 미준비 → B만 표시
+            ctx.clearRect(0, 0, w, h);
+            ctx.drawImage(srcB, 0, 0, w, h);
+        } else if (!def && srcA) {
+            // 효과 정의를 못 찾음 → 수동 dissolve 수행
+            console.warn(`[canvasRenderer] definition not found: ${transition.definitionId}, manual dissolve`);
+            ctx.clearRect(0, 0, w, h);
+            if (srcB) {
+                ctx.globalAlpha = 1 - transition.progress;
+                ctx.drawImage(srcA, 0, 0, w, h);
+                ctx.globalAlpha = transition.progress;
+                ctx.drawImage(srcB, 0, 0, w, h);
+                ctx.globalAlpha = 1;
+            } else {
+                ctx.drawImage(srcA, 0, 0, w, h);
+            }
         }
-        // 둘 다 없으면 이전 프레임 유지 (clearRect 하지 않음)
+        // 둘 다 없으면 → clearRect 안 함 (이전 프레임 유지)
+
+        // ── 일반 재생 ──
     } else {
-        // 5. 단일 클립 모드 — 소스 그리기
-        const source = (videoA && isVideoReady(videoA)) ? videoA : imageA;
-        if (source) {
-            try { ctx.drawImage(source, 0, 0, width, height); } catch { }
+        if (srcA) {
+            ctx.clearRect(0, 0, w, h);
+            ctx.drawImage(srcA, 0, 0, w, h);
         }
-        // source 없으면 이전 프레임 유지
+        // srcA 없으면 이전 프레임 유지
     }
 
     // 6. 필터/모션 효과 순차 적용
@@ -218,8 +237,9 @@ export function renderFrame(params: RenderFrameParams): void {
             progress: Math.max(0, Math.min(1, progress)),
             params: resolvedParams,
             canvas, ctx,
-            inputA, inputB: null,
-            width, height, fps,
+            inputA: srcA,
+            inputB: srcB,
+            width: w, height: h, fps,
         };
 
         const result = def.render(renderCtx);

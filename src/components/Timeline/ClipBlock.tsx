@@ -3,7 +3,7 @@ import React from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import { WaveformView } from './WaveformView';
 import { ThumbnailStrip } from './ThumbnailStrip';
-import type { Clip, Track, Transition } from '@/types/project';
+import type { Clip, Track } from '@/types/project';
 
 interface ClipBlockProps {
   clip: Clip;
@@ -30,9 +30,6 @@ const THUMBNAIL_HEIGHT_RATIO = 0.65;
 const WAVEFORM_HEIGHT_RATIO = 0.35;
 const VISUALIZATION_DIVIDER = '1px solid rgba(255,255,255,0.1)';
 const MULTI_SELECTED_BORDER = '2px solid rgba(108, 92, 231, 0.8)';
-
-
-
 const handleBase: React.CSSProperties = {
   width: HANDLE_WIDTH,
   height: '100%',
@@ -75,7 +72,6 @@ export function ClipBlock({
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const thumbnailCache = useEditorStore((s) => s.thumbnailCache);
   const waveformCache = useEditorStore((s) => s.waveformCache);
-  const transitions = useEditorStore((s) => s.transitions); /* ★ NEW */
 
   const thumbnailData = thumbnailCache.get(clip.assetId) ?? null;
   const waveformData = waveformCache.get(clip.assetId) ?? null;

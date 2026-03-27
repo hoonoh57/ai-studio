@@ -107,6 +107,9 @@ export function PreviewArea(): React.ReactElement {
     }
   }, []);
 
+  const resW = project?.width ?? 1920;
+  const resH = project?.height ?? 1080;
+
   /* ── 캔버스 크기 제어 (ResizeObserver) ── */
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -114,11 +117,11 @@ export function PreviewArea(): React.ReactElement {
     const container = canvas.parentElement;
     if (!container) return;
 
-    const resizeObserver = new ResizeObserver(() => {
+    const updateSize = () => {
       const { clientWidth, clientHeight } = container;
-      const projW = project?.width || 1920;
-      const projH = project?.height || 1080;
-      const projAspect = projW / projH;
+      if (clientWidth === 0 || clientHeight === 0) return;
+
+      const projAspect = resW / resH;
       const containerAspect = clientWidth / clientHeight;
 
       let displayW: number, displayH: number;
@@ -136,17 +139,14 @@ export function PreviewArea(): React.ReactElement {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.floor(displayW * dpr);
       canvas.height = Math.floor(displayH * dpr);
+    };
 
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (ctx) {
-        ctx.scale(dpr, dpr);
-        ctxRef.current = ctx;
-      }
-    });
-
+    const resizeObserver = new ResizeObserver(updateSize);
     resizeObserver.observe(container);
+    updateSize();
+
     return () => resizeObserver.disconnect();
-  }, [project.width, project.height]);
+  }, [resW, resH]);
 
   /* ── 현재 시간의 활성 클립 찾기 ── */
   const activeClip: ActiveClipData | null = useMemo(() => {
@@ -333,46 +333,56 @@ export function PreviewArea(): React.ReactElement {
 
   /* ── Canvas 렌더 루프 ── */
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = ctxRef.current;
-    if (!canvas || !ctx) return;
+    if (!canvasRef.current) return;
+    let animId: number;
 
-    const w = project.width ?? 1920;
-    const h = project.height ?? 1080;
+    const loop = () => {
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d', { willReadFrequently: true });
+      if (!canvas || !ctx) {
+        animId = requestAnimationFrame(loop);
+        return;
+      }
 
-    // 이미지 소스 결정
-    let imageA: HTMLImageElement | null = null;
-    const clipData = activeTransition ? activeTransition.fromClip : activeClip;
-    if (clipData && clipData.asset.type === 'image') {
-      const img = new Image();
-      img.src = clipData.asset.src;
-      if (img.complete) imageA = img;
-    }
+      // 이미지 소스 결정
+      let imageA: HTMLImageElement | null = null;
+      const clipData = activeTransition ? activeTransition.fromClip : activeClip;
+      if (clipData && clipData.asset.type === 'image') {
+        const img = new Image();
+        img.src = clipData.asset.src;
+        if (img.complete) imageA = img;
+      }
 
-    // 전환 정보
-    const transitionParam = activeTransition
-      ? {
+      // 전환 파라미터 구성
+      const transParam = activeTransition ? {
         definitionId: `transition-${activeTransition.type}`, // 'dissolve' → 'transition-dissolve'
         progress: activeTransition.progress,
-        duration: activeTransition.duration, // ★ ADD
-      }
-      : null;
+        duration: activeTransition.duration,
+      } : null;
 
-    // TODO: E-3에서 EffectInstance CRUD 구현 후 여기서 활성 효과를 가져옴
-    const activeEffects: EffectInstance[] = [];
+      // TODO: E-3에서 EffectInstance CRUD 구현 후 여기서 활성 효과를 가져옴
+      const activeEffects: any[] = [];
 
-    renderFrame({
-      canvas, ctx,
-      width: w, height: h,
-      fps: project.fps,
-      currentTime,
-      videoA: videoARef.current,
-      videoB: videoBRef.current,
-      imageA,
-      activeEffects,
-      transition: transitionParam,
-    });
-  }, [currentTime, activeClip, activeTransition, project.fps, project.width, project.height]);
+      renderFrame({
+        canvas,
+        ctx,
+        width: canvas.width,
+        height: canvas.height,
+        fps: project.fps,
+        currentTime,
+        videoA: videoARef.current,
+        videoB: videoBRef.current,
+        imageA: imageA ?? null,
+        activeEffects,
+        transition: transParam,
+      });
+
+      animId = requestAnimationFrame(loop);
+    };
+
+    animId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animId);
+  }, [currentTime, activeClip, activeTransition, project.fps]);
 
   /* ── 프레임 스텝 ── */
   const stepFrame = useCallback(

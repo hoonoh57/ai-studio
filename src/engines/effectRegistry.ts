@@ -74,67 +74,67 @@ const FILTERS: Array<{
     param: EffectParam; cssFn: (v: number) => string;
 }> = [
         {
-            id: 'filter.brightness', name: 'Brightness', icon: '☀️', desc: '밝기 조절',
+            id: 'filter-brightness', name: 'Brightness', icon: '☀️', desc: '밝기 조절',
             param: rangeParam('value', 'Brightness', 0, -100, 100, 1, '%'),
             cssFn: v => `brightness(${1 + v / 100})`
         },
         {
-            id: 'filter.contrast', name: 'Contrast', icon: '◑', desc: '대비 조절',
+            id: 'filter-contrast', name: 'Contrast', icon: '◑', desc: '대비 조절',
             param: rangeParam('value', 'Contrast', 0, -100, 100, 1, '%'),
             cssFn: v => `contrast(${1 + v / 100})`
         },
         {
-            id: 'filter.saturate', name: 'Saturation', icon: '🎨', desc: '채도 조절',
+            id: 'filter-saturate', name: 'Saturation', icon: '🎨', desc: '채도 조절',
             param: rangeParam('value', 'Saturation', 0, -100, 100, 1, '%'),
             cssFn: v => `saturate(${1 + v / 100})`
         },
         {
-            id: 'filter.hue-rotate', name: 'Hue Shift', icon: '🌈', desc: '색조 회전',
+            id: 'filter-hue-rotate', name: 'Hue Shift', icon: '🌈', desc: '색조 회전',
             param: rangeParam('value', 'Hue', 0, -180, 180, 1, '°'),
             cssFn: v => `hue-rotate(${v}deg)`
         },
         {
-            id: 'filter.blur', name: 'Blur', icon: '🌫️', desc: '흐림 효과',
+            id: 'filter-blur', name: 'Blur', icon: '🌫️', desc: '흐림 효과',
             param: rangeParam('value', 'Radius', 0, 0, 50, 0.5, 'px'),
             cssFn: v => `blur(${v}px)`
         },
         {
-            id: 'filter.grayscale', name: 'Grayscale', icon: '🔲', desc: '흑백 변환',
+            id: 'filter-grayscale', name: 'Grayscale', icon: '🔲', desc: '흑백 변환',
             param: rangeParam('value', 'Amount', 0, 0, 100, 1, '%'),
             cssFn: v => `grayscale(${v / 100})`
         },
         {
-            id: 'filter.sepia', name: 'Sepia', icon: '📜', desc: '세피아 톤',
+            id: 'filter-sepia', name: 'Sepia', icon: '📜', desc: '세피아 톤',
             param: rangeParam('value', 'Amount', 0, 0, 100, 1, '%'),
             cssFn: v => `sepia(${v / 100})`
         },
         {
-            id: 'filter.invert', name: 'Invert', icon: '🔄', desc: '색상 반전',
+            id: 'filter-invert', name: 'Invert', icon: '🔄', desc: '색상 반전',
             param: rangeParam('value', 'Amount', 0, 0, 100, 1, '%'),
             cssFn: v => `invert(${v / 100})`
         },
         {
-            id: 'filter.opacity', name: 'Opacity', icon: '◐', desc: '불투명도',
+            id: 'filter-opacity', name: 'Opacity', icon: '◐', desc: '불투명도',
             param: rangeParam('value', 'Opacity', 100, 0, 100, 1, '%'),
             cssFn: v => `opacity(${v / 100})`
         },
         {
-            id: 'filter.drop-shadow', name: 'Drop Shadow', icon: '🔳', desc: '그림자',
+            id: 'filter-drop-shadow', name: 'Drop Shadow', icon: '🔳', desc: '그림자',
             param: rangeParam('value', 'Size', 0, 0, 50, 1, 'px'),
             cssFn: v => `drop-shadow(${v}px ${v}px ${v}px rgba(0,0,0,0.5))`
         },
         {
-            id: 'filter.vignette', name: 'Vignette', icon: '🔅', desc: '비네팅',
+            id: 'filter-vignette', name: 'Vignette', icon: '🔅', desc: '비네팅',
             param: rangeParam('value', 'Amount', 0, 0, 100, 1, '%'),
             cssFn: v => `brightness(${1 - v / 200})`
         },
         {
-            id: 'filter.sharpen', name: 'Sharpen', icon: '🔍', desc: '선명하게',
+            id: 'filter-sharpen', name: 'Sharpen', icon: '🔍', desc: '선명하게',
             param: rangeParam('value', 'Amount', 0, 0, 100, 1, '%'),
             cssFn: v => `contrast(${1 + v / 200})`
         },
         {
-            id: 'filter.noise', name: 'Noise', icon: '📺', desc: '노이즈',
+            id: 'filter-noise', name: 'Noise', icon: '📺', desc: '노이즈',
             param: rangeParam('value', 'Amount', 0, 0, 100, 1, '%'),
             cssFn: v => `opacity(${1 - v / 100})`
         },
@@ -177,7 +177,7 @@ interface TransitionDef {
 
 const TRANSITIONS: TransitionDef[] = [
     {
-        id: 'transition.dissolve', name: 'Dissolve', icon: '🌊', desc: '디졸브',
+        id: 'transition-dissolve', name: 'Dissolve', icon: '🌊', desc: '디졸브',
         draw(ctx, a, b, p, w, h) {
             ctx.globalAlpha = 1;
             drawFull(ctx, a, w, h);
@@ -187,7 +187,7 @@ const TRANSITIONS: TransitionDef[] = [
         },
     },
     {
-        id: 'transition.fade-black', name: 'Fade Black', icon: '⬛', desc: '페이드 블랙',
+        id: 'transition-fade-black', name: 'Fade Black', icon: '⬛', desc: '페이드 블랙',
         draw(ctx, a, b, p, w, h) {
             if (p < 0.5) {
                 ctx.globalAlpha = 1 - p * 2;
@@ -200,7 +200,7 @@ const TRANSITIONS: TransitionDef[] = [
         },
     },
     {
-        id: 'transition.fade-white', name: 'Fade White', icon: '⬜', desc: '페이드 화이트',
+        id: 'transition-fade-white', name: 'Fade White', icon: '⬜', desc: '페이드 화이트',
         draw(ctx, a, b, p, w, h) {
             if (p < 0.5) {
                 drawFull(ctx, a, w, h);
@@ -217,7 +217,7 @@ const TRANSITIONS: TransitionDef[] = [
         },
     },
     {
-        id: 'transition.wipe-left', name: 'Wipe Left', icon: '◀', desc: '왼쪽 와이프',
+        id: 'transition-wipe-left', name: 'Wipe Left', icon: '◀', desc: '왼쪽 와이프',
         draw(ctx, a, b, p, w, h) {
             const split = Math.round(w * (1 - p));
             drawFull(ctx, a, w, h);
@@ -230,7 +230,7 @@ const TRANSITIONS: TransitionDef[] = [
         },
     },
     {
-        id: 'transition.wipe-right', name: 'Wipe Right', icon: '▶', desc: '오른쪽 와이프',
+        id: 'transition-wipe-right', name: 'Wipe Right', icon: '▶', desc: '오른쪽 와이프',
         draw(ctx, a, b, p, w, h) {
             const split = Math.round(w * p);
             drawFull(ctx, a, w, h);
@@ -243,7 +243,7 @@ const TRANSITIONS: TransitionDef[] = [
         },
     },
     {
-        id: 'transition.wipe-up', name: 'Wipe Up', icon: '🔼', desc: '위쪽 와이프',
+        id: 'transition-wipe-up', name: 'Wipe Up', icon: '🔼', desc: '위쪽 와이프',
         draw(ctx, a, b, p, w, h) {
             const split = Math.round(h * (1 - p));
             drawFull(ctx, a, w, h);
@@ -256,7 +256,7 @@ const TRANSITIONS: TransitionDef[] = [
         },
     },
     {
-        id: 'transition.wipe-down', name: 'Wipe Down', icon: '🔽', desc: '아래쪽 와이프',
+        id: 'transition-wipe-down', name: 'Wipe Down', icon: '🔽', desc: '아래쪽 와이프',
         draw(ctx, a, b, p, w, h) {
             const split = Math.round(h * p);
             drawFull(ctx, a, w, h);
@@ -269,7 +269,7 @@ const TRANSITIONS: TransitionDef[] = [
         },
     },
     {
-        id: 'transition.slide-left', name: 'Slide Left', icon: '⏪', desc: '슬라이드 왼쪽',
+        id: 'transition-slide-left', name: 'Slide Left', icon: '⏪', desc: '슬라이드 왼쪽',
         draw(ctx, a, b, p, w, h) {
             const offset = Math.round(w * p);
             ctx.save();
@@ -281,7 +281,7 @@ const TRANSITIONS: TransitionDef[] = [
         },
     },
     {
-        id: 'transition.slide-right', name: 'Slide Right', icon: '⏩', desc: '슬라이드 오른쪽',
+        id: 'transition-slide-right', name: 'Slide Right', icon: '⏩', desc: '슬라이드 오른쪽',
         draw(ctx, a, b, p, w, h) {
             const offset = Math.round(w * p);
             ctx.save();
@@ -293,7 +293,7 @@ const TRANSITIONS: TransitionDef[] = [
         },
     },
     {
-        id: 'transition.zoom-in', name: 'Zoom In', icon: '🔍', desc: '줌 인',
+        id: 'transition-zoom-in', name: 'Zoom In', icon: '🔍', desc: '줌 인',
         draw(ctx, a, b, p, w, h) {
             ctx.save();
             const s = 1 + p * 0.5;
@@ -314,7 +314,7 @@ const TRANSITIONS: TransitionDef[] = [
         },
     },
     {
-        id: 'transition.zoom-out', name: 'Zoom Out', icon: '🔎', desc: '줌 아웃',
+        id: 'transition-zoom-out', name: 'Zoom Out', icon: '🔎', desc: '줌 아웃',
         draw(ctx, a, b, p, w, h) {
             ctx.save();
             const s = 1 - p * 0.3;
@@ -335,7 +335,7 @@ const TRANSITIONS: TransitionDef[] = [
         },
     },
     {
-        id: 'transition.blur', name: 'Blur', icon: '🌫', desc: '블러 전환',
+        id: 'transition-blur', name: 'Blur', icon: '🌫', desc: '블러 전환',
         draw(ctx, a, b, p, w, h) {
             ctx.save();
             ctx.filter = `blur(${p * 20}px)`;
@@ -383,23 +383,23 @@ const MOTIONS: Array<{
     param: EffectParam;
 }> = [
         {
-            id: 'motion.x', name: 'Position X', icon: '↔', desc: 'X 이동',
+            id: 'motion-x', name: 'Position X', icon: '↔', desc: 'X 이동',
             param: rangeParam('value', 'X', 0, -1920, 1920, 1, 'px')
         },
         {
-            id: 'motion.y', name: 'Position Y', icon: '↕', desc: 'Y 이동',
+            id: 'motion-y', name: 'Position Y', icon: '↕', desc: 'Y 이동',
             param: rangeParam('value', 'Y', 0, -1080, 1080, 1, 'px')
         },
         {
-            id: 'motion.scale', name: 'Scale', icon: '⊞', desc: '크기',
+            id: 'motion-scale', name: 'Scale', icon: '⊞', desc: '크기',
             param: rangeParam('value', 'Scale', 1, 0, 5, 0.01, '×')
         },
         {
-            id: 'motion.rotation', name: 'Rotation', icon: '↻', desc: '회전',
+            id: 'motion-rotation', name: 'Rotation', icon: '↻', desc: '회전',
             param: rangeParam('value', 'Angle', 0, -360, 360, 1, '°')
         },
         {
-            id: 'motion.opacity', name: 'Opacity', icon: '◐', desc: '투명도',
+            id: 'motion-opacity', name: 'Opacity', icon: '◐', desc: '투명도',
             param: rangeParam('value', 'Opacity', 1, 0, 1, 0.01, '')
         },
     ];
@@ -422,23 +422,23 @@ MOTIONS.forEach(m => {
                 draw(ctx) {
                     ctx.save();
                     switch (m.id) {
-                        case 'motion.x':
+                        case 'motion-x':
                             ctx.translate(v, 0);
                             break;
-                        case 'motion.y':
+                        case 'motion-y':
                             ctx.translate(0, v);
                             break;
-                        case 'motion.scale':
+                        case 'motion-scale':
                             ctx.translate(rc.width / 2, rc.height / 2);
                             ctx.scale(v, v);
                             ctx.translate(-rc.width / 2, -rc.height / 2);
                             break;
-                        case 'motion.rotation':
+                        case 'motion-rotation':
                             ctx.translate(rc.width / 2, rc.height / 2);
                             ctx.rotate((v * Math.PI) / 180);
                             ctx.translate(-rc.width / 2, -rc.height / 2);
                             break;
-                        case 'motion.opacity':
+                        case 'motion-opacity':
                             ctx.globalAlpha = v;
                             break;
                     }
@@ -454,7 +454,7 @@ MOTIONS.forEach(m => {
    ▸ AUDIO 효과 등록 (2종)
    ════════════════════════════════════════ */
 effectRegistry.register({
-    id: 'audio.volume',
+    id: 'audio-volume',
     name: 'Volume',
     category: 'audio',
     icon: '🔊',
@@ -478,7 +478,7 @@ effectRegistry.register({
 });
 
 effectRegistry.register({
-    id: 'audio.fade',
+    id: 'audio-fade',
     name: 'Fade',
     category: 'audio',
     icon: '📈',
@@ -515,4 +515,8 @@ effectRegistry.register({
 /* ════════════════════════════════════════
    export
    ════════════════════════════════════════ */
+console.log('[effectRegistry] registered effects:',
+  Array.from(registry.keys())
+);
+
 export { effectRegistry as default };

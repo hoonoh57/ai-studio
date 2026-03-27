@@ -132,6 +132,7 @@ export interface EditorState {
   clearInOut: () => void;
   transitions: Transition[];
   addTransition: (t: Transition) => void;
+  updateTransition: (id: string, patch: Partial<Transition>) => void;
   removeTransition: (id: string) => void;
 
   /* 캐시 */
@@ -777,6 +778,9 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   transitions: [],
   effects: [], // ★ ADD
   addTransition: (t) => set((s) => ({ transitions: [...s.transitions, t] })),
+  updateTransition: (id, patch) => set((s) => ({
+    transitions: s.transitions.map(t => t.id === id ? { ...t, ...patch } : t)
+  })),
   removeTransition: (id) => set((s) => ({ transitions: s.transitions.filter(t => t.id !== id) })),
 
   /* ──── 캐시 ──── */
