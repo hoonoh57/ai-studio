@@ -9,6 +9,10 @@ import { TimelinePanel } from '@/components/Timeline/TimelinePanel';
 import { PropertiesPanel } from '@/components/Properties/PropertiesPanel';
 import { useAssetVisualization } from '@/hooks/useAssetVisualization';
 
+const MEDIA_PANEL_WIDTH = 260;
+const PROPERTIES_PANEL_WIDTH = 260;
+const TIMELINE_HEIGHT = 260;
+
 const styles: Record<string, React.CSSProperties> = {
   app: {
     display: 'flex',
@@ -20,17 +24,37 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flex: 1,
     overflow: 'hidden',
+    minHeight: 0,
   },
-  centerWrap: {
-    flex: 1,
-    display: 'flex',
+  mediaWrap: {
+    width: MEDIA_PANEL_WIDTH,
+    flexShrink: 0,
     overflow: 'hidden',
+    borderRight: '1px solid var(--border)',
   },
   centerCol: {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
+    minWidth: 0,
+  },
+  previewArea: {
+    flex: 1,
+    minHeight: 200,
+    overflow: 'hidden',
+  },
+  timelineArea: {
+    height: TIMELINE_HEIGHT,
+    flexShrink: 0,
+    borderTop: '1px solid var(--border)',
+    overflow: 'hidden',
+  },
+  propertiesWrap: {
+    width: PROPERTIES_PANEL_WIDTH,
+    flexShrink: 0,
+    overflow: 'hidden',
+    borderLeft: '1px solid var(--border)',
   },
   beginnerMain: {
     flex: 1,
@@ -154,12 +178,11 @@ function BeginnerView() {
 }
 
 export default function EditorLayout() {
-  useAssetVisualization(); // Trigger automation
+  useAssetVisualization();
   const skillLevel = useEditorStore((st) => st.skillLevel);
   const activeTab = useEditorStore((st) => st.activeTab);
   const config = SKILL_CONFIGS[skillLevel];
 
-  // Beginner: AI Creator only
   if (activeTab === 'ai-creator') {
     return (
       <div style={styles.app}>
@@ -169,20 +192,36 @@ export default function EditorLayout() {
     );
   }
 
-  // Intermediate and above: Editor with adaptive panels
   return (
     <div style={styles.app}>
       <TopBar />
       <div style={styles.main}>
+        {/* 아이콘 바 */}
         {config.showIconBar && <IconBar />}
-        <MediaPanel />
-        <div style={styles.centerWrap}>
-          <div style={styles.centerCol}>
-            <PreviewArea />
-            {config.showTimeline && <TimelinePanel />}
-          </div>
-          {config.showProperties && <PropertiesPanel />}
+
+        {/* 미디어 패널 — 고정 폭 래퍼 추가 */}
+        <div style={styles.mediaWrap}>
+          <MediaPanel />
         </div>
+
+        {/* 중앙: 프리뷰 + 타임라인 */}
+        <div style={styles.centerCol}>
+          <div style={styles.previewArea}>
+            <PreviewArea />
+          </div>
+          {config.showTimeline && (
+            <div style={styles.timelineArea}>
+              <TimelinePanel />
+            </div>
+          )}
+        </div>
+
+        {/* 속성 패널 — 고정 폭 래퍼 추가 */}
+        {config.showProperties && (
+          <div style={styles.propertiesWrap}>
+            <PropertiesPanel />
+          </div>
+        )}
       </div>
     </div>
   );
