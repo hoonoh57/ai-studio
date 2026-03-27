@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useCallback } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import TimelineToolbar from './TimelineToolbar';
 import { TrackHeader } from './TrackHeader';
-import TrackRow from './TrackRow';
+import { TrackRow } from './TrackRow';
 import { TimelineRuler } from './TimelineRuler';
 import { Playhead } from './Playhead';
 import { MarkerTrack } from './MarkerTrack';

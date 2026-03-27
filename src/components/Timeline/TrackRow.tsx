@@ -1,10 +1,12 @@
-import React from 'react';
-import type { Track, Clip } from '@/types/project';
-import { ClipBlock } from './ClipBlock';
+// src/components/Timeline/TrackRow.tsx
 
-type TrackRowProps = {
+import React from 'react';
+import { ClipBlock } from './ClipBlock';
+import type { Track, Clip, Asset } from '@/types/project';
+
+interface TrackRowProps {
   track: Track;
-  projectAssets: readonly { id: string; name: string }[];
+  projectAssets: readonly Asset[];
   pps: number;
   selectedClipId: string | null;
   onSelectClip: (clipId: string) => void;
@@ -13,9 +15,11 @@ type TrackRowProps = {
   onTrimRightStart: (e: React.MouseEvent, clip: Clip) => void;
   onDropClip: (e: React.DragEvent) => void;
   onDragOverTrack: (e: React.DragEvent) => void;
-};
+}
 
-export default function TrackRow({
+const HIDDEN_TRACK_OPACITY = 0.3;
+
+export function TrackRow({
   track,
   projectAssets,
   pps,
@@ -26,22 +30,26 @@ export default function TrackRow({
   onTrimRightStart,
   onDropClip,
   onDragOverTrack,
-}: TrackRowProps) {
+}: TrackRowProps): React.ReactElement {
+  const isLocked = track.locked;
+  const isVisible = track.visible;
+
   return (
     <div
       style={{
         position: 'relative',
         borderBottom: '1px solid var(--border)',
         height: track.height,
-        opacity: track.visible ? 1 : 0.3,
-        pointerEvents: track.locked ? 'none' : 'auto',
+        opacity: isVisible ? 1 : HIDDEN_TRACK_OPACITY,
+        pointerEvents: isLocked ? 'none' : 'auto',
       }}
-      onDrop={track.locked ? undefined : onDropClip}
-      onDragOver={track.locked ? undefined : onDragOverTrack}
+      onDrop={isLocked ? undefined : onDropClip}
+      onDragOver={isLocked ? undefined : onDragOverTrack}
     >
       {track.clips.map((clip) => {
         const asset = projectAssets.find((a) => a.id === clip.assetId);
-        const assetName = asset?.name || 'Clip';
+        const assetName = asset?.name ?? 'Clip';
+
         return (
           <ClipBlock
             key={clip.id}
