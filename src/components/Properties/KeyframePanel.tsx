@@ -6,29 +6,29 @@ import type { KeyframeProperty, EasingType, KeyframeTrack, Keyframe } from '@/ty
 
 /* ── 상수 ── */
 const PROPERTIES: { key: KeyframeProperty; label: string; icon: string; min: number; max: number; step: number; unit: string; defaultValue: number }[] = [
-  { key: 'x',          label: 'Position X', icon: '↔', min: -1920, max: 1920, step: 1,    unit: 'px', defaultValue: 0 },
-  { key: 'y',          label: 'Position Y', icon: '↕', min: -1080, max: 1080, step: 1,    unit: 'px', defaultValue: 0 },
-  { key: 'scale',      label: 'Scale',      icon: '⊞', min: 0,     max: 5,    step: 0.01, unit: '×',  defaultValue: 1 },
-  { key: 'rotation',   label: 'Rotation',   icon: '↻', min: -360,  max: 360,  step: 1,    unit: '°',  defaultValue: 0 },
-  { key: 'opacity',    label: 'Opacity',    icon: '◐', min: 0,     max: 1,    step: 0.01, unit: '',   defaultValue: 1 },
-  { key: 'volume',     label: 'Volume',     icon: '🔊', min: 0,     max: 2,    step: 0.01, unit: '',   defaultValue: 1 },
-  { key: 'blur',       label: 'Blur',       icon: '🌫', min: 0,     max: 50,   step: 0.5,  unit: 'px', defaultValue: 0 },
-  { key: 'brightness', label: 'Brightness', icon: '☀', min: -100,  max: 100,  step: 1,    unit: '%',  defaultValue: 0 },
-  { key: 'contrast',   label: 'Contrast',   icon: '◑', min: -100,  max: 100,  step: 1,    unit: '%',  defaultValue: 0 },
+  { key: 'x', label: 'Position X', icon: '↔', min: -1920, max: 1920, step: 1, unit: 'px', defaultValue: 0 },
+  { key: 'y', label: 'Position Y', icon: '↕', min: -1080, max: 1080, step: 1, unit: 'px', defaultValue: 0 },
+  { key: 'scale', label: 'Scale', icon: '⊞', min: 0, max: 5, step: 0.01, unit: '×', defaultValue: 1 },
+  { key: 'rotation', label: 'Rotation', icon: '↻', min: -360, max: 360, step: 1, unit: '°', defaultValue: 0 },
+  { key: 'opacity', label: 'Opacity', icon: '◐', min: 0, max: 1, step: 0.01, unit: '', defaultValue: 1 },
+  { key: 'volume', label: 'Volume', icon: '🔊', min: 0, max: 2, step: 0.01, unit: '', defaultValue: 1 },
+  { key: 'blur', label: 'Blur', icon: '🌫', min: 0, max: 50, step: 0.5, unit: 'px', defaultValue: 0 },
+  { key: 'brightness', label: 'Brightness', icon: '☀', min: -100, max: 100, step: 1, unit: '%', defaultValue: 0 },
+  { key: 'contrast', label: 'Contrast', icon: '◑', min: -100, max: 100, step: 1, unit: '%', defaultValue: 0 },
 ];
 
 const EASING_OPTIONS: { value: EasingType; label: string }[] = [
-  { value: 'linear',           label: 'Linear' },
-  { value: 'ease-in',          label: 'Ease In' },
-  { value: 'ease-out',         label: 'Ease Out' },
-  { value: 'ease-in-out',      label: 'Ease In-Out' },
-  { value: 'ease-in-cubic',    label: 'Cubic In' },
-  { value: 'ease-out-cubic',   label: 'Cubic Out' },
-  { value: 'ease-in-out-cubic',label: 'Cubic In-Out' },
-  { value: 'ease-out-bounce',  label: 'Bounce' },
+  { value: 'linear', label: 'Linear' },
+  { value: 'ease-in', label: 'Ease In' },
+  { value: 'ease-out', label: 'Ease Out' },
+  { value: 'ease-in-out', label: 'Ease In-Out' },
+  { value: 'ease-in-cubic', label: 'Cubic In' },
+  { value: 'ease-out-cubic', label: 'Cubic Out' },
+  { value: 'ease-in-out-cubic', label: 'Cubic In-Out' },
+  { value: 'ease-out-bounce', label: 'Bounce' },
   { value: 'ease-out-elastic', label: 'Elastic' },
-  { value: 'ease-out-back',    label: 'Back' },
-  { value: 'spring',           label: 'Spring' },
+  { value: 'ease-out-back', label: 'Back' },
+  { value: 'spring', label: 'Spring' },
 ];
 
 export function KeyframePanel(): React.ReactElement | null {
@@ -45,16 +45,19 @@ export function KeyframePanel(): React.ReactElement | null {
   const [selectedEasing, setSelectedEasing] = useState<EasingType>('ease-out');
 
   const config = SKILL_CONFIGS[skillLevel];
-  if (!config.showKeyframes) return null;
 
-  // 선택된 클립 찾기
+  // ★ FIX: useMemo를 조건부 return 전에 호출
   const clip = useMemo(() => {
+    if (!selectedClipId) return null;
     for (const t of project.tracks) {
       const c = t.clips.find(cl => cl.id === selectedClipId);
       if (c) return c;
     }
     return null;
   }, [project.tracks, selectedClipId]);
+
+  // ★ FIX: 모든 Hook 이후에 조건부 return
+  if (!config.showKeyframes) return null;
 
   if (!clip) {
     return (
