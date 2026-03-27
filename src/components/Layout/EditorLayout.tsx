@@ -3,7 +3,7 @@ import { useEditorStore } from '@/stores/editorStore';
 import { SKILL_CONFIGS } from '@/types/project';
 import TopBar from './TopBar';
 import IconBar from './IconBar';
-import MediaPanel from '@/components/MediaLibrary/MediaPanel';
+import { MediaPanel } from '@/components/MediaLibrary/MediaPanel';
 import { PreviewArea } from '@/components/Preview/PreviewArea';
 import { TimelinePanel } from '@/components/Timeline/TimelinePanel';
 import { PropertiesPanel } from '@/components/Properties/PropertiesPanel';

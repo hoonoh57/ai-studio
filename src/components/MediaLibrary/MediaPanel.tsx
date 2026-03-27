@@ -1,169 +1,290 @@
-import React, { useCallback } from 'react';
+// src/components/MediaLibrary/MediaPanel.tsx
+import React, { useRef, useCallback } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
+import type { Asset } from '@/types/project';
 
+/* ── 상수 ── */
+const DROP_ZONE_HEIGHT = 80;
+const DROP_ZONE_BORDER_RADIUS = 8;
+const DROP_ZONE_FONT_SIZE = 13;
+const ITEM_GAP = 8;
+const ITEM_PADDING_V = 8;
+const ITEM_PADDING_H = 10;
+const ITEM_BORDER_RADIUS = 6;
+const THUMB_SIZE = 36;
+const THUMB_BORDER_RADIUS = 4;
+const THUMB_FONT_SIZE = 18;
+const NAME_FONT_SIZE = 12;
+const META_FONT_SIZE = 10;
+const HEADER_FONT_SIZE = 12;
+const HEADER_PADDING_V = 8;
+const HEADER_PADDING_H = 12;
+const ACCEPTED_TYPES = ['video/', 'audio/', 'image/'];
+
+/* ── 스타일 ── */
 const styles: Record<string, React.CSSProperties> = {
   panel: {
-    width: 'var(--media-panel-width)',
-    minWidth: 220,
-    background: 'var(--bg-panel)',
-    borderRight: '1px solid var(--border)',
+    width: '100%',
+    height: '100%',
     display: 'flex',
     flexDirection: 'column',
+    background: 'var(--bg-panel)',
+    color: 'var(--text-primary)',
     overflow: 'hidden',
   },
   header: {
-    padding: '8px 12px',
-    fontSize: 12,
+    padding: `${HEADER_PADDING_V}px ${HEADER_PADDING_H}px`,
+    fontSize: HEADER_FONT_SIZE,
     fontWeight: 600,
-    color: 'var(--text-secondary)',
     borderBottom: '1px solid var(--border)',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   dropZone: {
-    margin: 8,
-    padding: 20,
-    border: '2px dashed var(--border-light)',
-    borderRadius: 'var(--radius-md)',
-    textAlign: 'center' as const,
-    fontSize: 11,
-    color: 'var(--text-muted)',
+    margin: ITEM_GAP,
+    height: DROP_ZONE_HEIGHT,
+    border: '2px dashed var(--border)',
+    borderRadius: DROP_ZONE_BORDER_RADIUS,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     cursor: 'pointer',
+    fontSize: DROP_ZONE_FONT_SIZE,
+    color: 'var(--text-secondary)',
+    transition: 'border-color 0.2s, background 0.2s',
+    flexShrink: 0,
+  },
+  dropZoneActive: {
+    borderColor: 'var(--accent)',
+    background: 'rgba(100, 150, 255, 0.08)',
   },
   list: {
     flex: 1,
-    overflowY: 'auto' as const,
-    padding: 8,
+    overflowY: 'auto',
+    padding: ITEM_GAP,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: ITEM_GAP,
   },
   item: {
     display: 'flex',
     alignItems: 'center',
-    gap: 8,
-    padding: '6px 8px',
-    borderRadius: 'var(--radius-sm)',
+    gap: ITEM_GAP,
+    padding: `${ITEM_PADDING_V}px ${ITEM_PADDING_H}px`,
+    borderRadius: ITEM_BORDER_RADIUS,
+    background: 'var(--bg-surface)',
     cursor: 'grab',
-    fontSize: 11,
-    color: 'var(--text-primary)',
-    marginBottom: 4,
+    transition: 'background 0.15s',
   },
   thumb: {
-    width: 40,
-    height: 28,
-    borderRadius: 3,
-    background: 'var(--bg-tertiary)',
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
+    borderRadius: THUMB_BORDER_RADIUS,
+    background: 'var(--bg-deep)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    fontSize: 14,
+    fontSize: THUMB_FONT_SIZE,
+    overflow: 'hidden',
     flexShrink: 0,
   },
-  meta: {
+  info: {
     flex: 1,
-    overflow: 'hidden',
+    minWidth: 0,
   },
   name: {
-    whiteSpace: 'nowrap' as const,
+    fontSize: NAME_FONT_SIZE,
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
-    fontSize: 11,
   },
-  size: {
-    fontSize: 9,
-    color: 'var(--text-muted)',
+  meta: {
+    fontSize: META_FONT_SIZE,
+    color: 'var(--text-secondary)',
+    marginTop: 2,
   },
 };
 
-function formatSize(bytes?: number) {
-  if (!bytes) return '';
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+/* ── 헬퍼 ── */
+const ICON_BY_TYPE: Record<string, string> = {
+  video: '🎬',
+  audio: '🎵',
+  image: '🖼️',
+};
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatDur(sec: number) {
+function formatDuration(sec: number): string {
+  if (isNaN(sec)) return '0:00';
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-export default function MediaPanel() {
-  const assets = useEditorStore((s) => s.project.assets);
-  const addAsset = useEditorStore((s) => s.addAsset);
+function isAcceptedFile(file: File): boolean {
+  return ACCEPTED_TYPES.some(t => file.type.startsWith(t));
+}
 
-  const handleFiles = useCallback((files: FileList | null) => {
-    if (!files) return;
-    Array.from(files).forEach((file) => {
+function getAssetType(file: File): 'video' | 'audio' | 'image' {
+  if (file.type.startsWith('video/')) return 'video';
+  if (file.type.startsWith('audio/')) return 'audio';
+  return 'image';
+}
+
+function loadMediaMetadata(
+  file: File,
+  url: string,
+): Promise<{ duration: number; width?: number; height?: number }> {
+  return new Promise((resolve) => {
+    const type = getAssetType(file);
+
+    if (type === 'video') {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.onloadedmetadata = () => {
+        resolve({
+          duration: video.duration,
+          width: video.videoWidth,
+          height: video.videoHeight,
+        });
+      };
+      video.onerror = () => resolve({ duration: 5 });
+      video.src = url;
+      return;
+    }
+
+    if (type === 'audio') {
+      const audio = document.createElement('audio');
+      audio.preload = 'metadata';
+      audio.onloadedmetadata = () => {
+        resolve({ duration: audio.duration });
+      };
+      audio.onerror = () => resolve({ duration: 5 });
+      audio.src = url;
+      return;
+    }
+
+    // image
+    resolve({ duration: 5 });
+  });
+}
+
+/* ── 컴포넌트 ── */
+export function MediaPanel(): React.ReactElement {
+  const assets = useEditorStore(s => s.project.assets);
+  const addAsset = useEditorStore(s => s.addAsset);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = React.useState(false);
+
+  const processFiles = useCallback(async (files: FileList | File[]) => {
+    const fileArray = Array.from(files).filter(isAcceptedFile);
+
+    for (const file of fileArray) {
       const url = URL.createObjectURL(file);
-      const type = file.type.startsWith('video') ? 'video' as const
-        : file.type.startsWith('audio') ? 'audio' as const
-        : 'image' as const;
+      const type = getAssetType(file);
+      const meta = await loadMediaMetadata(file, url);
 
-      if (type === 'video') {
-        const video = document.createElement('video');
-        video.preload = 'metadata';
-        video.onloadedmetadata = () => {
-          addAsset({
-            name: file.name,
-            type,
-            src: url,
-            duration: video.duration || 10,
-            width: video.videoWidth,
-            height: video.videoHeight,
-            fileSize: file.size,
-          });
-        };
-        video.src = url;
-      } else if (type === 'audio') {
-        const audio = document.createElement('audio');
-        audio.preload = 'metadata';
-        audio.onloadedmetadata = () => {
-          addAsset({ name: file.name, type, src: url, duration: audio.duration || 10, fileSize: file.size });
-        };
-        audio.src = url;
-      } else {
-        addAsset({ name: file.name, type, src: url, duration: 5, fileSize: file.size });
-      }
-    });
+      const asset: Omit<Asset, 'id'> = {
+        name: file.name,
+        type,
+        src: url,
+        duration: meta.duration,
+        width: meta.width,
+        height: meta.height,
+        fileSize: file.size,
+      };
+      addAsset(asset);
+    }
   }, [addAsset]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    handleFiles(e.dataTransfer.files);
-  }, [handleFiles]);
+    setIsDragOver(false);
+    if (e.dataTransfer.files.length > 0) {
+      processFiles(e.dataTransfer.files);
+    }
+  }, [processFiles]);
+
+  const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      processFiles(e.target.files);
+      e.target.value = '';
+    }
+  }, [processFiles]);
+
+  const handleDragStart = useCallback((assetId: string, e: React.DragEvent) => {
+    e.dataTransfer.setData('assetId', assetId);
+    e.dataTransfer.effectAllowed = 'copy';
+  }, []);
 
   return (
     <div style={styles.panel}>
-      <div style={styles.header}>Media Library ({assets.length})</div>
-      <div
-        style={styles.dropZone}
-        onDrop={handleDrop}
-        onDragOver={(e) => e.preventDefault()}
-        onClick={() => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.multiple = true;
-          input.accept = 'video/*,audio/*,image/*';
-          input.onchange = () => handleFiles(input.files);
-          input.click();
-        }}
-      >
-        📂 Drop files here or click to import
+      {/* 헤더 */}
+      <div style={styles.header}>
+        <span>Media Library</span>
+        <span style={{ opacity: 0.5 }}>{assets.length} items</span>
       </div>
+
+      {/* 드롭존 */}
+      <div
+        style={{
+          ...styles.dropZone,
+          ...(isDragOver ? styles.dropZoneActive : {}),
+        }}
+        onClick={() => fileInputRef.current?.click()}
+        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={handleDrop}
+      >
+        Drop files or Click to Upload
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="video/*,audio/*,image/*"
+        style={{ display: 'none' }}
+        onChange={handleFileInput}
+      />
+
+      {/* 에셋 목록 */}
       <div style={styles.list}>
         {assets.map((asset) => (
           <div
             key={asset.id}
             style={styles.item}
             draggable
-            onDragStart={(e) => e.dataTransfer.setData('assetId', asset.id)}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            onDragStart={(e) => handleDragStart(asset.id, e)}
           >
             <div style={styles.thumb}>
-              {asset.type === 'video' ? '🎬' : asset.type === 'audio' ? '🎵' : '🖼️'}
+              {asset.thumbnail ? (
+                <img
+                  src={asset.thumbnail}
+                  alt={asset.name}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                  }}
+                />
+              ) : (
+                ICON_BY_TYPE[asset.type] ?? '📁'
+              )}
             </div>
-            <div style={styles.meta}>
+            <div style={styles.info}>
               <div style={styles.name}>{asset.name}</div>
-              <div style={styles.size}>
-                {formatDur(asset.duration)} · {formatSize(asset.fileSize)}
-                {asset.width ? ` · ${asset.width}×${asset.height}` : ''}
+              <div style={styles.meta}>
+                {formatDuration(asset.duration)}
+                {asset.fileSize !== undefined && ` · ${formatFileSize(asset.fileSize)}`}
+                {asset.width !== undefined && asset.height !== undefined &&
+                  ` · ${asset.width}×${asset.height}`}
               </div>
             </div>
           </div>
