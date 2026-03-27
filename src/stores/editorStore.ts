@@ -61,7 +61,7 @@ export interface EditorState {
   setProjectName: (name: string) => void;
 
   /* 에셋 */
-  addAsset: (asset: Asset) => void;
+  addAsset: (asset: Omit<Asset, 'id'> & { id?: string }) => Asset;
   removeAsset: (id: string) => void;
 
   /* 트랙 (Phase T-1) */
@@ -193,15 +193,20 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   setProjectName: (name) => set((s) => ({ project: { ...s.project, name } })),
 
   /* ──── 에셋 ──── */
-  addAsset: (asset) => set((s) => ({
-    project: {
-      ...s.project,
-      assets: [...s.project.assets, {
-        ...asset,
-        metadata: asset.metadata ?? { addedAt: Date.now(), favorite: false, aiTags: [], collection: 'all' },
-      }],
-    },
-  })),
+  addAsset: (asset) => {
+    const newAsset: Asset = {
+      ...asset,
+      id: asset.id ?? uid('asset'),
+      metadata: asset.metadata ?? { addedAt: Date.now(), favorite: false, aiTags: [], collection: 'all' },
+    } as Asset;
+    set((s) => ({
+      project: {
+        ...s.project,
+        assets: [...s.project.assets, newAsset],
+      },
+    }));
+    return newAsset;
+  },
   removeAsset: (id) => set((s) => ({
     project: {
       ...s.project,
