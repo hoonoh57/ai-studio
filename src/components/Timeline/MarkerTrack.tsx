@@ -91,11 +91,12 @@ export function MarkerTrack({
       ref={containerRef}
       style={{
         position: 'absolute',
+        /* ★ 핵심 수정: top: 0 → 룰러 상단에 마커가 표시됨 */
         top: 0,
         left: 0,
         width: totalWidth,
         height: RULER_HEIGHT,
-        zIndex: 11000,
+        zIndex: 40,
         pointerEvents: 'none',
         userSelect: 'none',
       }}

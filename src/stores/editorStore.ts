@@ -25,38 +25,26 @@ const defaultProject: Project = {
     {
       id: uid('trk'), name: 'Video 1', type: 'video' as const,
       clips: [], muted: false, locked: false, visible: true,
-      height: 72,
-      heightPreset: 'L' as const,
-      color: DEFAULT_TRACK_COLORS.video,
-      solo: false,
-      order: 0,
+      height: 72, heightPreset: 'L' as const,
+      color: DEFAULT_TRACK_COLORS.video, solo: false, order: 0,
     },
     {
       id: uid('trk'), name: 'Video 2', type: 'video' as const,
       clips: [], muted: false, locked: false, visible: true,
-      height: 72,
-      heightPreset: 'L' as const,
-      color: DEFAULT_TRACK_COLORS.video,
-      solo: false,
-      order: 1,
+      height: 72, heightPreset: 'L' as const,
+      color: DEFAULT_TRACK_COLORS.video, solo: false, order: 1,
     },
     {
       id: uid('trk'), name: 'Audio 1', type: 'audio' as const,
       clips: [], muted: false, locked: false, visible: true,
-      height: 48,
-      heightPreset: 'M' as const,
-      color: DEFAULT_TRACK_COLORS.audio,
-      solo: false,
-      order: 2,
+      height: 48, heightPreset: 'M' as const,
+      color: DEFAULT_TRACK_COLORS.audio, solo: false, order: 2,
     },
     {
       id: uid('trk'), name: 'Audio 2', type: 'audio' as const,
       clips: [], muted: false, locked: false, visible: true,
-      height: 48,
-      heightPreset: 'M' as const,
-      color: DEFAULT_TRACK_COLORS.audio,
-      solo: false,
-      order: 3,
+      height: 48, heightPreset: 'M' as const,
+      color: DEFAULT_TRACK_COLORS.audio, solo: false, order: 3,
     },
   ],
   assets: [],
@@ -84,7 +72,7 @@ export interface EditorState {
   moveTrack: (id: string, direction: 'up' | 'down') => void;
   duplicateTrack: (id: string) => void;
 
-  /* ── Phase T-2: Safe Actions ── */
+  /* Phase T-2: 트랙 고급 액션 */
   setTrackColor: (trackId: string, color: string) => void;
   setTrackHeightPreset: (trackId: string, preset: string) => void;
   toggleSolo: (trackId: string) => void;
@@ -99,6 +87,7 @@ export interface EditorState {
   updateClipsBulk: (updates: { clipId: string; patch: Partial<Clip> }[]) => void;
   removeClip: (clipId: string) => void;
   splitClip: (clipId: string, time: number) => void;
+  moveClipToTrack: (clipId: string, fromTrackId: string, toTrackId: string) => void;
 
   /* 재생/선택 */
   currentTime: number;
@@ -112,6 +101,7 @@ export interface EditorState {
   markers: Marker[];
   addMarker: (marker: Marker) => void;
   removeMarker: (id: string) => void;
+  updateMarker: (id: string, patch: Partial<Marker>) => void;
   inOut: InOutRange;
   setInPoint: (t: number) => void;
   setOutPoint: (t: number) => void;
@@ -125,6 +115,8 @@ export interface EditorState {
   thumbnailCache: Map<string, ThumbnailData>;
   setWaveform: (id: string, data: WaveformData) => void;
   setThumbnail: (id: string, data: ThumbnailData) => void;
+  cacheWaveform: (id: string, data: WaveformData) => void;
+  cacheThumbnail: (id: string, data: ThumbnailData) => void;
 
   /* 타임라인 UI */
   zoom: number;
@@ -143,7 +135,7 @@ export interface EditorState {
   activePanel: PanelId | null;
   setActivePanel: (panel: PanelId | null) => void;
 
-  /* Undo/Redo/Helper */
+  /* Undo/Redo */
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
   pushUndo: (label: string) => void;
@@ -157,12 +149,15 @@ export interface EditorState {
 export type StoreType = EditorState & MediaSlice;
 
 /* 헬퍼 */
-function deepCloneTracks(tracks: Track[]): Track[] { return JSON.parse(JSON.stringify(tracks)); }
+function deepCloneTracks(tracks: Track[]): Track[] {
+  return JSON.parse(JSON.stringify(tracks));
+}
+
 function nextTrackName(tracks: Track[], type: TrackType): string {
   const prefix = type.charAt(0).toUpperCase() + type.slice(1);
   const existing = tracks.filter(t => t.type === type).map(t => {
-      const m = t.name.match(new RegExp(`^${prefix}\\s+(\\d+)$`));
-      return m ? parseInt(m[1], 10) : 0;
+    const m = t.name.match(new RegExp(`^${prefix}\\s+(\\d+)$`));
+    return m ? parseInt(m[1], 10) : 0;
   });
   const maxNum = existing.length > 0 ? Math.max(...existing) : 0;
   return `${prefix} ${maxNum + 1}`;
@@ -174,45 +169,78 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   setProjectName: (name) => set((s) => ({ project: { ...s.project, name } })),
 
   /* ──── 에셋 ──── */
-  addAsset: (asset) => set((s: any) => ({
-    project: { ...s.project, assets: [...s.project.assets, { ...asset, metadata: asset.metadata ?? { addedAt: Date.now(), favorite: false, aiTags: [], collection: 'all' } }] },
+  addAsset: (asset) => set((s) => ({
+    project: {
+      ...s.project,
+      assets: [...s.project.assets, {
+        ...asset,
+        metadata: asset.metadata ?? { addedAt: Date.now(), favorite: false, aiTags: [], collection: 'all' },
+      }],
+    },
   })),
-  removeAsset: (id) => set((s: any) => ({
-    project: { ...s.project, assets: s.project.assets.filter((a: any) => a.id !== id), tracks: s.project.tracks.map((t: any) => ({ ...t, clips: t.clips.filter((c: any) => c.assetId !== id) })) },
+  removeAsset: (id) => set((s) => ({
+    project: {
+      ...s.project,
+      assets: s.project.assets.filter(a => a.id !== id),
+      tracks: s.project.tracks.map(t => ({
+        ...t,
+        clips: t.clips.filter(c => c.assetId !== id),
+      })),
+    },
   })),
 
   /* ──── 트랙 ──── */
   addTrack: (type, name) => {
     let newTrackRef: Track | null = null;
-    set((s: any) => {
+    set((s) => {
       const tracks = s.project.tracks;
       const newTrack: Track = {
-        id: uid('trk'), name: name || nextTrackName(tracks, type), type, clips: [],
-        muted: false, locked: false, visible: true,
+        id: uid('trk'),
+        name: name || nextTrackName(tracks, type),
+        type,
+        clips: [],
+        muted: false,
+        locked: false,
+        visible: true,
         height: type === 'audio' ? 48 : 72,
         heightPreset: type === 'audio' ? 'M' : 'L',
         color: DEFAULT_TRACK_COLORS[type],
-        solo: false, order: tracks.length,
+        solo: false,
+        order: tracks.length,
       };
       newTrackRef = newTrack;
       return { project: { ...s.project, tracks: [...tracks, newTrack] } };
     });
     return newTrackRef!;
   },
+
   addTrackChecked: (type, name) => {
     const s = get();
-    if (s.project.tracks.length >= (SKILL_CONFIGS[s.skillLevel]?.maxTracks ?? 4)) {
-      alert(`최대 트랙 한도에 도달했습니다.`); return false;
+    const maxTracks = SKILL_CONFIGS[s.skillLevel]?.maxTracks ?? 4;
+    if (s.project.tracks.length >= maxTracks) {
+      alert(`최대 트랙 한도(${maxTracks})에 도달했습니다.`);
+      return false;
     }
-    s.pushUndo('트랙 추가'); s.addTrack(type, name); return true;
+    s.pushUndo('트랙 추가');
+    s.addTrack(type, name);
+    return true;
   },
-  updateTrack: (id, patch) => set((s: any) => ({
-    project: { ...s.project, tracks: s.project.tracks.map((t: any) => t.id === id ? { ...t, ...patch } : t) },
+
+  updateTrack: (id, patch) => set((s) => ({
+    project: {
+      ...s.project,
+      tracks: s.project.tracks.map(t => t.id === id ? { ...t, ...patch } : t),
+    },
   })),
-  removeTrack: (id) => set((s: any) => ({
-    project: { ...s.project, tracks: s.project.tracks.filter((t: any) => t.id !== id).map((t: any, i: any) => ({ ...t, order: i })) },
+
+  removeTrack: (id) => set((s) => ({
+    project: {
+      ...s.project,
+      tracks: s.project.tracks.filter(t => t.id !== id).map((t, i) => ({ ...t, order: i })),
+    },
   })),
-  moveTrack: (id, direction) => set((s: any) => {
+
+  moveTrack: (id, direction) => set((s) => {
     const tracks = [...s.project.tracks];
     const idx = tracks.findIndex(t => t.id === id);
     if (idx < 0) return s;
@@ -221,159 +249,265 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     [tracks[idx], tracks[swapIdx]] = [tracks[swapIdx], tracks[idx]];
     return { project: { ...s.project, tracks: tracks.map((t, i) => ({ ...t, order: i })) } };
   }),
-  duplicateTrack: (id) => set((s: any) => {
-    const src = s.project.tracks.find((t: any) => t.id === id);
+
+  duplicateTrack: (id) => set((s) => {
+    const src = s.project.tracks.find(t => t.id === id);
     if (!src) return s;
-    const newTrack: Track = { ...JSON.parse(JSON.stringify(src)), id: uid('trk'), name: `${src.name} (Duplicate)`, order: s.project.tracks.length, clips: src.clips.map((c: any) => ({ ...JSON.parse(JSON.stringify(c)), id: uid('clip'), linkedClipId: undefined })) };
+    const newTrack: Track = {
+      ...JSON.parse(JSON.stringify(src)),
+      id: uid('trk'),
+      name: `${src.name} (Copy)`,
+      order: s.project.tracks.length,
+      clips: src.clips.map(c => ({
+        ...JSON.parse(JSON.stringify(c)),
+        id: uid('clip'),
+        linkedClipId: undefined,
+      })),
+    };
     return { project: { ...s.project, tracks: [...s.project.tracks, newTrack] } };
   }),
 
-  /* ── Phase T-2: Safe 트랙 액션 ── */
-  setTrackColor: (trackId: string, color: string) =>
-    set((s: any) => ({
-      project: {
-        ...s.project,
-        tracks: s.project.tracks.map((t: any) =>
-          t.id === trackId ? { ...t, color } : t
-        ),
-      },
-    })),
+  /* ── Phase T-2: 트랙 고급 액션 ── */
+  setTrackColor: (trackId, color) => set((s) => ({
+    project: {
+      ...s.project,
+      tracks: s.project.tracks.map(t => t.id === trackId ? { ...t, color } : t),
+    },
+  })),
 
-  setTrackHeightPreset: (trackId: string, preset: string) => {
+  setTrackHeightPreset: (trackId, preset) => {
     const PRESETS: Record<string, number> = { S: 30, M: 48, L: 72, XL: 120 };
-    set((s: any) => {
-      const height = PRESETS[preset] ?? s.project.tracks.find((t: any) => t.id === trackId)?.height ?? 48;
+    set((s) => {
+      const height = PRESETS[preset] ?? s.project.tracks.find(t => t.id === trackId)?.height ?? 48;
       return {
         project: {
           ...s.project,
-          tracks: s.project.tracks.map((t: any) =>
-            t.id === trackId ? { ...t, height, heightPreset: preset } : t
+          tracks: s.project.tracks.map(t =>
+            t.id === trackId ? { ...t, height, heightPreset: preset as TrackHeightPreset } : t
           ),
         },
       };
     });
   },
 
-  toggleSolo: (trackId: string) =>
-    set((s: any) => ({
+  toggleSolo: (trackId) => set((s) => ({
+    project: {
+      ...s.project,
+      tracks: s.project.tracks.map(t =>
+        t.id === trackId && t.type === 'audio' ? { ...t, solo: !t.solo } : t
+      ),
+    },
+  })),
+
+  reorderTracks: (fromIndex, toIndex) => set((s) => {
+    if (fromIndex === toIndex) return s;
+    const tracks = [...s.project.tracks];
+    const [moved] = tracks.splice(fromIndex, 1);
+    tracks.splice(toIndex, 0, moved);
+    return { project: { ...s.project, tracks: tracks.map((t, i) => ({ ...t, order: i })) } };
+  }),
+
+  linkClips: (clipIdA, clipIdB) => set((s) => ({
+    project: {
+      ...s.project,
+      tracks: s.project.tracks.map(t => ({
+        ...t,
+        clips: t.clips.map(c => {
+          if (c.id === clipIdA) return { ...c, linkedClipId: clipIdB };
+          if (c.id === clipIdB) return { ...c, linkedClipId: clipIdA };
+          return c;
+        }),
+      })),
+    },
+  })),
+
+  unlinkClip: (clipId) => set((s) => {
+    let partnerId: string | undefined;
+    for (const t of s.project.tracks) {
+      const c = t.clips.find(cl => cl.id === clipId);
+      if (c?.linkedClipId) { partnerId = c.linkedClipId; break; }
+    }
+    return {
       project: {
         ...s.project,
-        tracks: s.project.tracks.map((t: any) =>
-          t.id === trackId && t.type === 'audio'
-            ? { ...t, solo: !t.solo }
-            : t
-        ),
-      },
-    })),
-
-  reorderTracks: (fromIndex, toIndex) =>
-    set((s: any) => {
-      if (fromIndex === toIndex) return s;
-      const tracks = [...s.project.tracks];
-      const [moved] = tracks.splice(fromIndex, 1);
-      tracks.splice(toIndex, 0, moved);
-      return { project: { ...s.project, tracks: tracks.map((t, i) => ({ ...t, order: i })) } };
-    }),
-
-  linkClips: (clipIdA, clipIdB) =>
-    set((s: any) => ({
-      project: {
-        ...s.project,
-        tracks: s.project.tracks.map((t: any) => ({
+        tracks: s.project.tracks.map(t => ({
           ...t,
-          clips: t.clips.map((c: any) => {
-            if (c.id === clipIdA) return { ...c, linkedClipId: clipIdB };
-            if (c.id === clipIdB) return { ...c, linkedClipId: clipIdA };
+          clips: t.clips.map(c => {
+            if (c.id === clipId || c.id === partnerId) return { ...c, linkedClipId: undefined };
             return c;
           }),
         })),
       },
-    })),
-
-  unlinkClip: (clipId) =>
-    set((s: any) => {
-      let partnerId: string | undefined;
-      for (const t of s.project.tracks) {
-        const c = (t as any).clips.find((cl: any) => cl.id === clipId);
-        if (c?.linkedClipId) { partnerId = c.linkedClipId; break; }
-      }
-      return {
-        project: {
-          ...s.project,
-          tracks: s.project.tracks.map((t: any) => ({
-            ...t,
-            clips: t.clips.map((c: any) => {
-              if (c.id === clipId || c.id === partnerId) { return { ...c, linkedClipId: undefined }; }
-              return c;
-            }),
-          })),
-        },
-      };
-    }),
+    };
+  }),
 
   getEffectiveMuted: (trackId) => {
     const s = get();
-    const track = s.project.tracks.find((t: any) => t.id === trackId);
+    const track = s.project.tracks.find(t => t.id === trackId);
     if (!track) return false;
     if (track.muted) return true;
-    const audioTracks = s.project.tracks.filter((t: any) => t.type === 'audio');
-    const anySolo = audioTracks.some((t: any) => t.solo);
+    const audioTracks = s.project.tracks.filter(t => t.type === 'audio');
+    const anySolo = audioTracks.some(t => t.solo);
     if (anySolo && track.type === 'audio' && !track.solo) return true;
     return false;
   },
 
   /* ──── 클립 ──── */
-  addClip: (trackId, clip) => set((s: any) => ({
-    project: { ...s.project, tracks: s.project.tracks.map((t: any) => t.id === trackId ? { ...t, clips: [...t.clips, clip] } : t) },
+  addClip: (trackId, clip) => set((s) => ({
+    project: {
+      ...s.project,
+      tracks: s.project.tracks.map(t =>
+        t.id === trackId ? { ...t, clips: [...t.clips, clip] } : t
+      ),
+    },
   })),
-  updateClip: (clipId, patch) => set((s: any) => ({
-    project: { ...s.project, tracks: s.project.tracks.map((t: any) => ({ ...t, clips: t.clips.map((c: any) => c.id === clipId ? { ...c, ...patch } : c) })) },
+
+  updateClip: (clipId, patch) => set((s) => ({
+    project: {
+      ...s.project,
+      tracks: s.project.tracks.map(t => ({
+        ...t,
+        clips: t.clips.map(c => c.id === clipId ? { ...c, ...patch } : c),
+      })),
+    },
   })),
-  updateClipsBulk: (updates) => set((s: any) => {
+
+  updateClipsBulk: (updates) => set((s) => {
     const patchMap = new Map(updates.map(u => [u.clipId, u.patch]));
-    return { project: { ...s.project, tracks: s.project.tracks.map((t: any) => ({ ...t, clips: t.clips.map((c: any) => { const p = patchMap.get(c.id); return p ? { ...c, ...p } : c; }) })) } };
+    return {
+      project: {
+        ...s.project,
+        tracks: s.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c => {
+            const p = patchMap.get(c.id);
+            return p ? { ...c, ...p } : c;
+          }),
+        })),
+      },
+    };
   }),
-  removeClip: (clipId) => set((s: any) => ({
-    project: { ...s.project, tracks: s.project.tracks.map((t: any) => ({ ...t, clips: t.clips.filter((c: any) => c.id !== clipId) })) },
+
+  removeClip: (clipId) => set((s) => ({
+    project: {
+      ...s.project,
+      tracks: s.project.tracks.map(t => ({
+        ...t,
+        clips: t.clips.filter(c => c.id !== clipId),
+      })),
+    },
   })),
+
   splitClip: (clipId, time) => {
-    const s = get(); let trackOwner: Track | undefined; let clipOwner: Clip | undefined;
-    for (const t of s.project.tracks) { const c = t.clips.find(cl => cl.id === clipId); if (c) { trackOwner = t; clipOwner = c; break; } }
+    const s = get();
+    let trackOwner: Track | undefined;
+    let clipOwner: Clip | undefined;
+    for (const t of s.project.tracks) {
+      const c = t.clips.find(cl => cl.id === clipId);
+      if (c) { trackOwner = t; clipOwner = c; break; }
+    }
     if (!trackOwner || !clipOwner || trackOwner.locked) return;
-    const rel = time - clipOwner.startTime; if (rel <= 0 || rel >= clipOwner.duration) return;
+    const rel = time - clipOwner.startTime;
+    if (rel <= 0 || rel >= clipOwner.duration) return;
     s.pushUndo('클립 분할');
-    const L: Clip = { ...JSON.parse(JSON.stringify(clipOwner)), duration: rel, outPoint: clipOwner.inPoint + rel };
-    const R: Clip = { ...JSON.parse(JSON.stringify(clipOwner)), id: uid('clip'), startTime: time, duration: clipOwner.duration - rel, inPoint: clipOwner.inPoint + rel, linkedClipId: undefined };
-    set((st: any) => ({ project: { ...st.project, tracks: st.project.tracks.map((t: any) => t.id === trackOwner!.id ? { ...t, clips: [...t.clips.filter((c: any) => c.id !== clipId), L, R] } : t) } }));
+    const L: Clip = {
+      ...JSON.parse(JSON.stringify(clipOwner)),
+      duration: rel,
+      outPoint: clipOwner.inPoint + rel,
+    };
+    const R: Clip = {
+      ...JSON.parse(JSON.stringify(clipOwner)),
+      id: uid('clip'),
+      startTime: time,
+      duration: clipOwner.duration - rel,
+      inPoint: clipOwner.inPoint + rel,
+      linkedClipId: undefined,
+    };
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t =>
+          t.id === trackOwner!.id
+            ? { ...t, clips: [...t.clips.filter(c => c.id !== clipId), L, R] }
+            : t
+        ),
+      },
+    }));
+  },
+
+  /* ── B5 FIX: 클립 트랙 간 이동 ── */
+  moveClipToTrack: (clipId, fromTrackId, toTrackId) => {
+    if (fromTrackId === toTrackId) return;
+    set((s) => {
+      let movedClip: Clip | undefined;
+      const tracksAfterRemove = s.project.tracks.map(t => {
+        if (t.id === fromTrackId) {
+          const clip = t.clips.find(c => c.id === clipId);
+          if (clip) movedClip = { ...clip };
+          return { ...t, clips: t.clips.filter(c => c.id !== clipId) };
+        }
+        return t;
+      });
+      if (!movedClip) return s;
+      const tracksAfterAdd = tracksAfterRemove.map(t => {
+        if (t.id === toTrackId) {
+          return { ...t, clips: [...t.clips, movedClip!] };
+        }
+        return t;
+      });
+      return { project: { ...s.project, tracks: tracksAfterAdd } };
+    });
   },
 
   /* ──── 재생/선택 ──── */
-  currentTime: 0, isPlaying: false, setCurrentTime: (t) => set({ currentTime: Math.max(0, t) }),
+  currentTime: 0,
+  isPlaying: false,
+  setCurrentTime: (t) => set({ currentTime: Math.max(0, t) }),
   togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
-  selectedClipId: null, selectClip: (id) => set({ selectedClipId: id }),
+  selectedClipId: null,
+  selectClip: (id) => set({ selectedClipId: id }),
 
   /* ──── 마커/InOut/트랜지션 ──── */
-  markers: [], addMarker: (m) => set((s) => ({ markers: [...s.markers, m] })),
+  markers: [],
+  addMarker: (m) => set((s) => ({ markers: [...s.markers, m] })),
   removeMarker: (id) => set((s) => ({ markers: s.markers.filter(m => m.id !== id) })),
+
+  /* ── B1 FIX: updateMarker 추가 ── */
+  updateMarker: (id, patch) => set((s) => ({
+    markers: s.markers.map(m => m.id === id ? { ...m, ...patch } : m),
+  })),
+
   inOut: { inPoint: null, outPoint: null },
   setInPoint: (t) => set((s) => ({ inOut: { ...s.inOut, inPoint: t } })),
   setOutPoint: (t) => set((s) => ({ inOut: { ...s.inOut, outPoint: t } })),
   clearInOut: () => set({ inOut: { inPoint: null, outPoint: null } }),
-  transitions: [], addTransition: (t) => set((s) => ({ transitions: [...s.transitions, t] })),
+  transitions: [],
+  addTransition: (t) => set((s) => ({ transitions: [...s.transitions, t] })),
   removeTransition: (id) => set((s) => ({ transitions: s.transitions.filter(t => t.id !== id) })),
 
   /* ──── 캐시 ──── */
-  waveformCache: new Map(), thumbnailCache: new Map(),
+  waveformCache: new Map(),
+  thumbnailCache: new Map(),
   setWaveform: (id, data) => set((s) => ({ waveformCache: new Map(s.waveformCache).set(id, data) })),
   setThumbnail: (id, data) => set((s) => ({ thumbnailCache: new Map(s.thumbnailCache).set(id, data) })),
+  /* B6 FIX: 별칭 추가 — 외부에서 cacheWaveform/cacheThumbnail 호출 시 호환 */
+  cacheWaveform: (id, data) => set((s) => ({ waveformCache: new Map(s.waveformCache).set(id, data) })),
+  cacheThumbnail: (id, data) => set((s) => ({ thumbnailCache: new Map(s.thumbnailCache).set(id, data) })),
 
   /* ──── 타임라인 UI ──── */
-  zoom: 1, setZoom: (z) => set({ zoom: Math.max(0.1, Math.min(10, z)) }),
-  snapEnabled: true, toggleSnap: () => set((s) => ({ snapEnabled: !s.snapEnabled })),
-  trimMode: 'normal', setTrimMode: (m) => set({ trimMode: m }),
+  zoom: 1,
+  setZoom: (z) => set({ zoom: Math.max(0.1, Math.min(10, z)) }),
+  snapEnabled: true,
+  toggleSnap: () => set((s) => ({ snapEnabled: !s.snapEnabled })),
+  trimMode: 'normal',
+  setTrimMode: (m) => set({ trimMode: m }),
   recalcDuration: () => set((s) => {
     let max = 10;
-    for (const t of s.project.tracks) { for (const c of t.clips) { max = Math.max(max, c.startTime + c.duration); } }
+    for (const t of s.project.tracks) {
+      for (const c of t.clips) {
+        max = Math.max(max, c.startTime + c.duration);
+      }
+    }
     return { project: { ...s.project, duration: max + 5 } };
   }),
 
@@ -381,24 +515,42 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   skillLevel: 'intermediate',
   setSkillLevel: (level) => set((s) => {
     const config = SKILL_CONFIGS[level];
-    const newTab = level === 'beginner' ? 'ai-creator' as EditorTab : (config.enabledTabs.includes(s.activeTab) ? s.activeTab : 'edit' as EditorTab);
+    const newTab = level === 'beginner'
+      ? 'ai-creator' as EditorTab
+      : (config.enabledTabs.includes(s.activeTab) ? s.activeTab : 'edit' as EditorTab);
     return { skillLevel: level, activeTab: newTab };
   }),
-  activeTab: 'edit', setActiveTab: (tab) => set({ activeTab: tab }),
-  activePanel: null, setActivePanel: (panel) => set({ activePanel: panel }),
+  activeTab: 'edit',
+  setActiveTab: (tab) => set({ activeTab: tab }),
+  activePanel: null,
+  setActivePanel: (panel) => set({ activePanel: panel }),
 
-  /* ──── Undo / Helper ──── */
-  undoStack: [], redoStack: [],
-  pushUndo: (label) => set((s) => ({ undoStack: [...s.undoStack.slice(-49), { label, tracks: deepCloneTracks(s.project.tracks) }], redoStack: [] })),
+  /* ──── Undo/Redo ──── */
+  undoStack: [],
+  redoStack: [],
+  pushUndo: (label) => set((s) => ({
+    undoStack: [...s.undoStack.slice(-(MAX_HISTORY - 1)), { label, tracks: deepCloneTracks(s.project.tracks) }],
+    redoStack: [],
+  })),
   undo: () => set((s) => {
     if (s.undoStack.length === 0) return s;
-    const stack = [...s.undoStack]; const e = stack.pop()!;
-    return { undoStack: stack, redoStack: [...s.redoStack, { label: e.label, tracks: deepCloneTracks(s.project.tracks) }], project: { ...s.project, tracks: e.tracks } };
+    const stack = [...s.undoStack];
+    const e = stack.pop()!;
+    return {
+      undoStack: stack,
+      redoStack: [...s.redoStack, { label: e.label, tracks: deepCloneTracks(s.project.tracks) }],
+      project: { ...s.project, tracks: e.tracks },
+    };
   }),
   redo: () => set((s) => {
     if (s.redoStack.length === 0) return s;
-    const stack = [...s.redoStack]; const e = stack.pop()!;
-    return { redoStack: stack, undoStack: [...s.undoStack, { label: e.label, tracks: deepCloneTracks(s.project.tracks) }], project: { ...s.project, tracks: e.tracks } };
+    const stack = [...s.redoStack];
+    const e = stack.pop()!;
+    return {
+      redoStack: stack,
+      undoStack: [...s.undoStack, { label: e.label, tracks: deepCloneTracks(s.project.tracks) }],
+      project: { ...s.project, tracks: e.tracks },
+    };
   }),
   canUndo: () => get().undoStack.length > 0,
   canRedo: () => get().redoStack.length > 0,
