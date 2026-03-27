@@ -7,6 +7,7 @@ import MediaPanel from '@/components/MediaLibrary/MediaPanel';
 import PreviewArea from '@/components/Preview/PreviewArea';
 import TimelinePanel from '@/components/Timeline/TimelinePanel';
 import PropertiesPanel from '@/components/Properties/PropertiesPanel';
+import { useAssetVisualization } from '@/hooks/useAssetVisualization';
 
 const styles: Record<string, React.CSSProperties> = {
   app: {
@@ -153,6 +154,7 @@ function BeginnerView() {
 }
 
 export default function EditorLayout() {
+  useAssetVisualization(); // Trigger automation
   const skillLevel = useEditorStore((st) => st.skillLevel);
   const activeTab = useEditorStore((st) => st.activeTab);
   const config = SKILL_CONFIGS[skillLevel];

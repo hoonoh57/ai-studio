@@ -43,29 +43,30 @@ export default function ThumbnailStrip({
 
     const totalFrames = thumbnailData.frames.length;
     const interval = thumbnailData.interval;
-    const clipDuration = clipEnd - clipStart;
-    const startFrame = Math.max(0, Math.floor((clipStart / interval)));
-    const endFrame = Math.min(totalFrames - 1, Math.floor((clipEnd / interval)));
-    const count = Math.max(1, endFrame - startFrame + 1);
+    const clipSourceDuration = sourceEnd - sourceStart;
+    
+    // Calculate how many thumbnails we can fit in the physical width
+    // Each thumbnail is approximately 160px wide at base zoom, 
+    // but here we fill the 'width' with frames from the source range.
+    const startFrame = Math.max(0, Math.floor(sourceStart / interval));
+    const endFrame = Math.min(totalFrames - 1, Math.ceil(sourceEnd / interval));
+    const frameRangeCount = Math.max(1, endFrame - startFrame + 1);
 
-    const tileWidth = width / count;
+    const tileWidth = width / frameRangeCount;
 
     const drawFrame = (index: number, x: number) => {
+      if (!thumbnailData.frames[index]) return;
       const img = new Image();
       img.src = thumbnailData.frames[index];
       img.onload = () => {
         ctx.drawImage(img, x, 0, tileWidth, height);
       };
-      img.onerror = () => {
-        ctx.fillStyle = 'rgba(0,0,0,0.2)';
-        ctx.fillRect(x, 0, tileWidth, height);
-      };
     };
 
-    for (let i = startFrame; i <= endFrame; i += 1) {
+    for (let i = startFrame; i <= endFrame; i++) {
       drawFrame(i, (i - startFrame) * tileWidth);
     }
-  }, [thumbnailData, clipStart, clipEnd, sourceStart, sourceEnd, width, height]);
+  }, [thumbnailData, sourceStart, sourceEnd, width, height]);
 
   return <canvas ref={canvasRef} width={width} height={height} style={{ width, height }} />;
 }
