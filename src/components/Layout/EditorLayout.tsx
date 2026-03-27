@@ -6,7 +6,7 @@ import IconBar from './IconBar';
 import MediaPanel from '@/components/MediaLibrary/MediaPanel';
 import { PreviewArea } from '@/components/Preview/PreviewArea';
 import { TimelinePanel } from '@/components/Timeline/TimelinePanel';
-import PropertiesPanel from '@/components/Properties/PropertiesPanel';
+import { PropertiesPanel } from '@/components/Properties/PropertiesPanel';
 import { useAssetVisualization } from '@/hooks/useAssetVisualization';
 
 const styles: Record<string, React.CSSProperties> = {

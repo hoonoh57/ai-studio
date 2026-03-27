@@ -1,99 +1,148 @@
+// src/components/Properties/PropertiesPanel.tsx
+
 import React from 'react';
 import { useEditorStore } from '@/stores/editorStore';
+import type { BlendMode } from '@/types/project';
 
-const styles: Record<string, React.CSSProperties> = {
+const PANEL_MIN_WIDTH = 220;
+const HEADER_PADDING_V = 8;
+const HEADER_PADDING_H = 12;
+const HEADER_FONT_SIZE = 12;
+const CONTENT_PADDING = 12;
+const SECTION_MARGIN_BOTTOM = 16;
+const SECTION_TITLE_FONT_SIZE = 10;
+const SECTION_TITLE_LETTER_SPACING = 1;
+const ROW_MARGIN_BOTTOM = 6;
+const LABEL_FONT_SIZE = 11;
+const INPUT_WIDTH = 64;
+const SELECT_WIDTH = 100;
+const INPUT_FONT_SIZE = 11;
+const EMPTY_PADDING_TOP = 40;
+const EMPTY_FONT_SIZE = 12;
+const AI_BTN_FONT_SIZE = 11;
+const AI_BTN_PADDING_V = 6;
+
+const VALID_BLEND_MODES: readonly BlendMode[] = [
+  'normal',
+  'multiply',
+  'screen',
+  'overlay',
+  'add',
+  'difference',
+];
+
+function isValidBlendMode(value: string): value is BlendMode {
+  return VALID_BLEND_MODES.includes(value as BlendMode);
+}
+
+const AI_TOOLS = [
+  { icon: '🤖', label: 'Background Remove' },
+  { icon: '🎨', label: 'Style Transfer' },
+  { icon: '📐', label: 'Smart Crop' },
+  { icon: '🔊', label: 'Audio Enhance' },
+  { icon: '📝', label: 'Auto Subtitle' },
+] as const;
+
+const styles = {
   panel: {
     width: 'var(--properties-width)',
-    minWidth: 220,
+    minWidth: PANEL_MIN_WIDTH,
     background: 'var(--bg-panel)',
     borderLeft: '1px solid var(--border)',
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-  },
+  } as React.CSSProperties,
   header: {
-    padding: '8px 12px',
-    fontSize: 12,
+    padding: `${HEADER_PADDING_V}px ${HEADER_PADDING_H}px`,
+    fontSize: HEADER_FONT_SIZE,
     fontWeight: 600,
     color: 'var(--text-secondary)',
     borderBottom: '1px solid var(--border)',
-  },
+  } as React.CSSProperties,
   content: {
     flex: 1,
     overflowY: 'auto',
-    padding: 12,
-  },
+    padding: CONTENT_PADDING,
+  } as React.CSSProperties,
   section: {
-    marginBottom: 16,
-  },
+    marginBottom: SECTION_MARGIN_BOTTOM,
+  } as React.CSSProperties,
   sectionTitle: {
-    fontSize: 10,
+    fontSize: SECTION_TITLE_FONT_SIZE,
     fontWeight: 700,
     color: 'var(--accent)',
-    textTransform: 'uppercase' as const,
-    marginBottom: 8,
-    letterSpacing: 1,
-  },
+    textTransform: 'uppercase',
+    marginBottom: HEADER_PADDING_V,
+    letterSpacing: SECTION_TITLE_LETTER_SPACING,
+  } as React.CSSProperties,
   row: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 6,
-  },
+    marginBottom: ROW_MARGIN_BOTTOM,
+  } as React.CSSProperties,
   label: {
-    fontSize: 11,
+    fontSize: LABEL_FONT_SIZE,
     color: 'var(--text-secondary)',
-  },
+  } as React.CSSProperties,
+  valueLabel: {
+    fontSize: LABEL_FONT_SIZE,
+    color: 'var(--text-primary)',
+  } as React.CSSProperties,
   input: {
-    width: 64,
+    width: INPUT_WIDTH,
     background: 'var(--bg-surface)',
     border: '1px solid var(--border)',
     borderRadius: 3,
     color: 'var(--text-primary)',
     padding: '2px 6px',
-    fontSize: 11,
-    textAlign: 'right' as const,
-  },
+    fontSize: INPUT_FONT_SIZE,
+    textAlign: 'right',
+  } as React.CSSProperties,
   select: {
-    width: 100,
+    width: SELECT_WIDTH,
     background: 'var(--bg-surface)',
     border: '1px solid var(--border)',
     borderRadius: 3,
     color: 'var(--text-primary)',
     padding: '2px 4px',
-    fontSize: 11,
-  },
+    fontSize: INPUT_FONT_SIZE,
+  } as React.CSSProperties,
   empty: {
-    textAlign: 'center' as const,
+    textAlign: 'center',
     color: 'var(--text-muted)',
-    fontSize: 12,
-    paddingTop: 40,
-  },
+    fontSize: EMPTY_FONT_SIZE,
+    paddingTop: EMPTY_PADDING_TOP,
+  } as React.CSSProperties,
   aiBtn: {
     width: '100%',
-    padding: '6px 0',
+    padding: `${AI_BTN_PADDING_V}px 0`,
     background: 'var(--bg-surface)',
     border: '1px solid var(--border)',
     borderRadius: 4,
     color: 'var(--text-secondary)',
-    fontSize: 11,
+    fontSize: AI_BTN_FONT_SIZE,
     cursor: 'pointer',
     marginBottom: 4,
-  },
-};
+    fontFamily: 'inherit',
+  } as React.CSSProperties,
+} as const;
 
-export default function PropertiesPanel() {
+export function PropertiesPanel(): React.ReactElement {
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const project = useEditorStore((s) => s.project);
   const updateClip = useEditorStore((s) => s.updateClip);
 
-  const clip = selectedClipId
+  const clip = selectedClipId !== null
     ? project.tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId)
-    : null;
+    : undefined;
 
-  const asset = clip ? project.assets.find((a) => a.id === clip.assetId) : null;
+  const asset = clip !== undefined
+    ? project.assets.find((a) => a.id === clip.assetId)
+    : undefined;
 
-  if (!clip) {
+  if (clip === undefined) {
     return (
       <div style={styles.panel}>
         <div style={styles.header}>Properties</div>
@@ -102,25 +151,65 @@ export default function PropertiesPanel() {
     );
   }
 
-  const updateTransform = (key: keyof typeof clip.transform, value: number) => {
-    updateClip(clip.id, { transform: { ...clip.transform, [key]: value } });
+  const handleTransformChange = (
+    key: keyof typeof clip.transform,
+    value: number,
+  ) => {
+    updateClip(clip.id, {
+      transform: { ...clip.transform, [key]: value },
+    });
   };
+
+  const handleScaleChange = (value: number) => {
+    updateClip(clip.id, {
+      transform: { ...clip.transform, scaleX: value, scaleY: value },
+    });
+  };
+
+  const handleOpacityChange = (value: number) => {
+    updateClip(clip.id, { opacity: value });
+  };
+
+  const handleBlendModeChange = (
+    e: React.ChangeEvent<HTMLSelectElement>,
+  ) => {
+    const value = e.target.value;
+    if (isValidBlendMode(value)) {
+      updateClip(clip.id, { blendMode: value });
+    }
+  };
+
+  const handleSpeedChange = (value: number) => {
+    updateClip(clip.id, { speed: value });
+  };
+
+  const parseNum = (raw: string, fallback: number): number => {
+    const parsed = parseFloat(raw);
+    return isNaN(parsed) ? fallback : parsed;
+  };
+
+  const clipDuration = clip.timelineEnd - clip.timelineStart;
+  const displayName = asset?.name ?? 'Clip';
 
   return (
     <div style={styles.panel}>
-      <div style={styles.header}>Properties — {asset?.name || 'Clip'}</div>
+      <div style={styles.header}>Properties — {displayName}</div>
       <div style={styles.content}>
         {/* Transform */}
         <div style={styles.section}>
           <div style={styles.sectionTitle}>Transform</div>
           {(['x', 'y'] as const).map((key) => (
             <div style={styles.row} key={key}>
-              <span style={styles.label}>Position {key.toUpperCase()}</span>
+              <span style={styles.label}>
+                Position {key.toUpperCase()}
+              </span>
               <input
                 type="number"
                 style={styles.input}
                 value={clip.transform[key]}
-                onChange={(e) => updateTransform(key, parseFloat(e.target.value) || 0)}
+                onChange={(e) =>
+                  handleTransformChange(key, parseNum(e.target.value, 0))
+                }
               />
             </div>
           ))}
@@ -131,10 +220,9 @@ export default function PropertiesPanel() {
               step="0.1"
               style={styles.input}
               value={clip.transform.scaleX}
-              onChange={(e) => {
-                const v = parseFloat(e.target.value) || 1;
-                updateClip(clip.id, { transform: { ...clip.transform, scaleX: v, scaleY: v } });
-              }}
+              onChange={(e) =>
+                handleScaleChange(parseNum(e.target.value, 1))
+              }
             />
           </div>
           <div style={styles.row}>
@@ -143,7 +231,12 @@ export default function PropertiesPanel() {
               type="number"
               style={styles.input}
               value={clip.transform.rotation}
-              onChange={(e) => updateTransform('rotation', parseFloat(e.target.value) || 0)}
+              onChange={(e) =>
+                handleTransformChange(
+                  'rotation',
+                  parseNum(e.target.value, 0),
+                )
+              }
             />
           </div>
         </div>
@@ -160,7 +253,9 @@ export default function PropertiesPanel() {
               step="0.05"
               style={styles.input}
               value={clip.opacity}
-              onChange={(e) => updateClip(clip.id, { opacity: parseFloat(e.target.value) || 1 })}
+              onChange={(e) =>
+                handleOpacityChange(parseNum(e.target.value, 1))
+              }
             />
           </div>
           <div style={styles.row}>
@@ -168,10 +263,12 @@ export default function PropertiesPanel() {
             <select
               style={styles.select}
               value={clip.blendMode}
-              onChange={(e) => updateClip(clip.id, { blendMode: e.target.value as any })}
+              onChange={handleBlendModeChange}
             >
-              {['normal', 'multiply', 'screen', 'overlay', 'add', 'difference'].map((m) => (
-                <option key={m} value={m}>{m}</option>
+              {VALID_BLEND_MODES.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
               ))}
             </select>
           </div>
@@ -184,7 +281,9 @@ export default function PropertiesPanel() {
               step="0.1"
               style={styles.input}
               value={clip.speed}
-              onChange={(e) => updateClip(clip.id, { speed: parseFloat(e.target.value) || 1 })}
+              onChange={(e) =>
+                handleSpeedChange(parseNum(e.target.value, 1))
+              }
             />
           </div>
         </div>
@@ -194,26 +293,32 @@ export default function PropertiesPanel() {
           <div style={styles.sectionTitle}>Time</div>
           <div style={styles.row}>
             <span style={styles.label}>Start</span>
-            <span style={{ ...styles.label, color: 'var(--text-primary)' }}>{clip.timelineStart.toFixed(2)}s</span>
+            <span style={styles.valueLabel}>
+              {clip.timelineStart.toFixed(2)}s
+            </span>
           </div>
           <div style={styles.row}>
             <span style={styles.label}>End</span>
-            <span style={{ ...styles.label, color: 'var(--text-primary)' }}>{clip.timelineEnd.toFixed(2)}s</span>
+            <span style={styles.valueLabel}>
+              {clip.timelineEnd.toFixed(2)}s
+            </span>
           </div>
           <div style={styles.row}>
             <span style={styles.label}>Duration</span>
-            <span style={{ ...styles.label, color: 'var(--text-primary)' }}>{(clip.timelineEnd - clip.timelineStart).toFixed(2)}s</span>
+            <span style={styles.valueLabel}>
+              {clipDuration.toFixed(2)}s
+            </span>
           </div>
         </div>
 
         {/* AI Tools */}
         <div style={styles.section}>
           <div style={styles.sectionTitle}>AI Tools</div>
-          <button style={styles.aiBtn}>🤖 Background Remove</button>
-          <button style={styles.aiBtn}>🎨 Style Transfer</button>
-          <button style={styles.aiBtn}>📐 Smart Crop</button>
-          <button style={styles.aiBtn}>🔊 Audio Enhance</button>
-          <button style={styles.aiBtn}>📝 Auto Subtitle</button>
+          {AI_TOOLS.map((tool) => (
+            <button key={tool.label} style={styles.aiBtn}>
+              {tool.icon} {tool.label}
+            </button>
+          ))}
         </div>
       </div>
     </div>
