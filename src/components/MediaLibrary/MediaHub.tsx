@@ -375,6 +375,19 @@ const S: Record<string, React.CSSProperties> = {
 //  헬퍼 함수
 // ═══════════════════════════════════════════
 
+function formatDuration(sec: number): string {
+  if (isNaN(sec) || sec <= 0) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function isAcceptedFile(file: File): boolean {
   return ACCEPTED_TYPES.some(t => file.type.startsWith(t));
 }
@@ -715,6 +728,13 @@ export function MediaHub(): React.ReactElement {
       });
     }
   }, [addAsset, setAssetTags]);
+
+  const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files !== null && e.target.files.length > 0) {
+      processFiles(e.target.files);
+      e.target.value = '';
+    }
+  }, [processFiles]);
 
   // ── 드래그 & 드롭 ──
   const handleDrop = useCallback((e: React.DragEvent) => {
