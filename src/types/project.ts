@@ -122,6 +122,7 @@ export interface SkillConfig {
   label: string;
   maxTracks: number;
   showTimeline: boolean;
+  showIconBar?: boolean;
   showProperties: boolean;
   showEffects: boolean;
   showColorGrading: boolean;
@@ -150,6 +151,7 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     label: '초급',
     maxTracks: 4,
     showTimeline: true,
+    showIconBar: false,
     showProperties: false,
     showEffects: false,
     showColorGrading: false,
@@ -174,6 +176,7 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     label: '중급',
     maxTracks: 32,
     showTimeline: true,
+    showIconBar: true,
     showProperties: true,
     showEffects: true,
     showColorGrading: false,
@@ -198,6 +201,7 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     label: '고급',
     maxTracks: 128,
     showTimeline: true,
+    showIconBar: true,
     showProperties: true,
     showEffects: true,
     showColorGrading: true,
@@ -222,6 +226,7 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     label: '전문가',
     maxTracks: 999,
     showTimeline: true,
+    showIconBar: true,
     showProperties: true,
     showEffects: true,
     showColorGrading: true,
