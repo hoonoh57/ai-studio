@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useMemo, useCallback } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
-import { renderFrame, isVideoReady } from '@/engines/canvasRenderer';
+import { isVideoReady } from '@/engines/canvasRenderer';
+import { effectRegistry } from '@/engines/effectRegistry';
 
 const CANVAS_BG = '#000000';
 
@@ -10,8 +11,10 @@ export function PreviewArea() {
   const videoBRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const playAnimRef = useRef<number>(0);
+  // 현재 videoA/B에 로드된 src 추적
+  const loadedSrcA = useRef<string>('');
+  const loadedSrcB = useRef<string>('');
 
-  /* ─── 스토어 구독 (실제 존재하는 필드만) ─── */
   const currentTime = useEditorStore(s => s.currentTime);
   const setCurrentTime = useEditorStore(s => s.setCurrentTime);
   const isPlaying = useEditorStore(s => s.isPlaying);
@@ -20,33 +23,29 @@ export function PreviewArea() {
   const transitions = useEditorStore(s => s.transitions);
 
   const fps = project?.fps ?? 30;
-  // ★ project.width / project.height 사용 (resolution 아님)
   const projW = project?.width ?? 1920;
   const projH = project?.height ?? 1080;
 
-  /* ─── 현재 활성 클립 ─── */
-  const activeClip = useMemo(() => {
-    if (!project?.tracks) return null;
-    for (const track of project.tracks) {
+  /* ─── 헬퍼: 클립/전환 찾기 (순수 함수, 스토어 직접 참조) ─── */
+  function findActiveClipAt(time: number) {
+    const state = useEditorStore.getState();
+    for (const track of state.project.tracks) {
       if (!track.clips) continue;
       for (const clip of track.clips) {
-        const clipEnd = clip.startTime + (clip.duration || 0);
-        if (currentTime >= clip.startTime && currentTime < clipEnd) {
+        if (time >= clip.startTime && time < clip.startTime + clip.duration) {
           return clip;
         }
       }
     }
     return null;
-  }, [project?.tracks, currentTime]);
+  }
 
-  /* ─── 활성 전환 ─── */
-  const activeTransition = useMemo(() => {
-    if (!transitions || transitions.length === 0 || !project?.tracks) return null;
-    for (const t of transitions) {
-      let clipA: typeof activeClip = null;
-      let clipB: typeof activeClip = null;
-      for (const track of project.tracks) {
-        if (!track.clips) continue;
+  function findActiveTransitionAt(time: number) {
+    const state = useEditorStore.getState();
+    if (!state.transitions || state.transitions.length === 0) return null;
+    for (const t of state.transitions) {
+      let clipA: any = null, clipB: any = null;
+      for (const track of state.project.tracks) {
         for (const clip of track.clips) {
           if (clip.id === t.clipAId) clipA = clip;
           if (clip.id === t.clipBId) clipB = clip;
@@ -55,15 +54,21 @@ export function PreviewArea() {
       if (!clipA || !clipB) continue;
       const tStart = clipA.startTime + clipA.duration - t.duration;
       const tEnd = clipA.startTime + clipA.duration;
-      if (currentTime >= tStart && currentTime < tEnd) {
-        const progress = (currentTime - tStart) / t.duration;
+      if (time >= tStart && time < tEnd) {
+        const progress = (time - tStart) / t.duration;
         return { transition: t, clipA, clipB, progress: Math.max(0, Math.min(1, progress)) };
       }
     }
     return null;
-  }, [transitions, project?.tracks, currentTime]);
+  }
 
-  /* ─── 캔버스 크기: 컨테이너 맞춤 + 비율 유지 ─── */
+  function findAssetSrc(assetId: string): string {
+    const state = useEditorStore.getState();
+    const asset = state.project.assets?.find(a => a.id === assetId);
+    return asset?.src || '';
+  }
+
+  /* ─── 캔버스 크기 ─── */
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -73,21 +78,15 @@ export function PreviewArea() {
       const cw = container.clientWidth;
       const ch = container.clientHeight;
       if (cw === 0 || ch === 0) return;
-
       const projAspect = projW / projH;
       const contAspect = cw / ch;
       let dw: number, dh: number;
-      if (contAspect > projAspect) {
-        dh = ch; dw = ch * projAspect;
-      } else {
-        dw = cw; dh = cw / projAspect;
-      }
-      dw = Math.floor(dw);
-      dh = Math.floor(dh);
-      canvas.style.width = `${dw}px`;
-      canvas.style.height = `${dh}px`;
-      canvas.width = dw;
-      canvas.height = dh;
+      if (contAspect > projAspect) { dh = ch; dw = ch * projAspect; }
+      else { dw = cw; dh = cw / projAspect; }
+      canvas.style.width = `${Math.floor(dw)}px`;
+      canvas.style.height = `${Math.floor(dh)}px`;
+      canvas.width = Math.floor(dw);
+      canvas.height = Math.floor(dh);
     };
 
     const ro = new ResizeObserver(updateSize);
@@ -96,122 +95,17 @@ export function PreviewArea() {
     return () => ro.disconnect();
   }, [projW, projH]);
 
-  /* ─── asset src 찾기 헬퍼 ─── */
-  const findAssetSrc = useCallback((assetId: string): string => {
-    const asset = project?.assets?.find(a => a.id === assetId);
-    if (!asset) return '';
-    // ★ Asset 인터페이스는 src 필드 사용
-    return asset.src || '';
-  }, [project?.assets]);
-
-  /* ─── Video A 소스 동기화 ─── */
-  useEffect(() => {
-    const video = videoARef.current;
-    if (!video) return;
-
-    const clip = activeTransition ? activeTransition.clipA : activeClip;
-    if (!clip) return;
-
-    const src = findAssetSrc(clip.assetId);
-    if (!src) return;
-
-    // src 변경 시에만 로드
-    if (!video.src.endsWith(src) && video.src !== src) {
-      video.src = src;
-      video.load();
-    }
-
-    // 탐색 모드: 현재 시간에 맞게 seek
-    if (!isPlaying) {
-      const localTime = currentTime - clip.startTime + (clip.inPoint || 0);
-      if (Math.abs(video.currentTime - localTime) > 0.05) {
-        video.currentTime = Math.max(0, localTime);
-      }
-    }
-  }, [activeClip, activeTransition, currentTime, isPlaying, findAssetSrc]);
-
-  /* ─── Video B 소스 동기화 (전환용) ─── */
-  useEffect(() => {
-    const video = videoBRef.current;
-    if (!video || !activeTransition) return;
-
-    const clipB = activeTransition.clipB;
-    const src = findAssetSrc(clipB.assetId);
-    if (!src) return;
-
-    if (!video.src.endsWith(src) && video.src !== src) {
-      video.src = src;
-      video.load();
-    }
-
-    if (!isPlaying) {
-      const localTime = currentTime - clipB.startTime + (clipB.inPoint || 0);
-      if (Math.abs(video.currentTime - localTime) > 0.05) {
-        video.currentTime = Math.max(0, localTime);
-      }
-    }
-  }, [activeTransition, currentTime, isPlaying, findAssetSrc]);
-
-  /* ─── 재생: video.play() 제어 ─── */
-  useEffect(() => {
-    const videoA = videoARef.current;
-    if (!videoA) return;
-
-    if (isPlaying && videoA.src) {
-      const clip = activeClip;
-      if (clip) {
-        videoA.playbackRate = clip.speed || 1;
-        videoA.muted = true;
-        videoA.play().catch(() => { });
-      }
-    } else {
-      videoA.pause();
-    }
-  }, [isPlaying, activeClip]);
-
-  /* ─── 재생 시 currentTime 증가 ─── */
-  useEffect(() => {
-    if (!isPlaying) {
-      cancelAnimationFrame(playAnimRef.current);
-      return;
-    }
-
-    let lastTs = performance.now();
-    const tick = (now: number) => {
-      const dt = (now - lastTs) / 1000;
-      lastTs = now;
-
-      const speed = activeClip?.speed || 1;
-      const state = useEditorStore.getState();
-      const newTime = state.currentTime + dt * speed;
-      const maxTime = project?.duration || 60;
-
-      if (newTime >= maxTime) {
-        setCurrentTime(maxTime);
-        // ★ togglePlay 대신 직접 setState
-        useEditorStore.setState({ isPlaying: false });
-        return;
-      }
-
-      setCurrentTime(newTime);
-      playAnimRef.current = requestAnimationFrame(tick);
-    };
-
-    playAnimRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(playAnimRef.current);
-  }, [isPlaying]);
-
-  /* ─── drawWithAspect: 비율 보정 그리기 ─── */
-  const drawWithAspect = useCallback((
-    source: HTMLVideoElement | HTMLImageElement,
+  /* ─── drawWithAspect ─── */
+  function drawWithAspect(
+    source: CanvasImageSource,
     ctx: CanvasRenderingContext2D,
     cw: number, ch: number
-  ) => {
-    let sw: number, sh: number;
+  ) {
+    let sw = cw, sh = ch;
     if (source instanceof HTMLVideoElement) {
       sw = source.videoWidth || cw;
       sh = source.videoHeight || ch;
-    } else {
+    } else if (source instanceof HTMLImageElement) {
       sw = source.naturalWidth || cw;
       sh = source.naturalHeight || ch;
     }
@@ -224,61 +118,157 @@ export function PreviewArea() {
       dh = ch; dw = ch * srcAspect; dx = (cw - dw) / 2; dy = 0;
     }
     ctx.drawImage(source, dx, dy, dw, dh);
-  }, []);
+  }
 
-  /* ─── 캔버스 렌더 루프 ─── */
+  /* ─── 비디오 소스 로드 헬퍼 ─── */
+  function loadVideoSrc(video: HTMLVideoElement, src: string, loadedRef: React.MutableRefObject<string>) {
+    if (src && loadedRef.current !== src) {
+      video.src = src;
+      video.load();
+      loadedRef.current = src;
+    }
+  }
+
+  /* ─── 재생 루프 ─── */
+  useEffect(() => {
+    if (!isPlaying) {
+      cancelAnimationFrame(playAnimRef.current);
+      const videoA = videoARef.current;
+      if (videoA) videoA.pause();
+      return;
+    }
+
+    const videoA = videoARef.current;
+    if (videoA && videoA.src) {
+      videoA.muted = true;
+      videoA.play().catch(() => { });
+    }
+
+    let lastTs = performance.now();
+    const tick = (now: number) => {
+      const dt = (now - lastTs) / 1000;
+      lastTs = now;
+
+      const state = useEditorStore.getState();
+      const clip = findActiveClipAt(state.currentTime);
+      const speed = clip?.speed || 1;
+      const newTime = state.currentTime + dt * speed;
+      const maxTime = state.project?.duration || 60;
+
+      if (newTime >= maxTime) {
+        setCurrentTime(maxTime);
+        useEditorStore.setState({ isPlaying: false });
+        return;
+      }
+
+      setCurrentTime(newTime);
+      playAnimRef.current = requestAnimationFrame(tick);
+    };
+
+    playAnimRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(playAnimRef.current);
+  }, [isPlaying, setCurrentTime]);
+
+  /* ─── 메인 캔버스 렌더 루프 (모든 로직을 여기서 처리) ─── */
   useEffect(() => {
     let rafId: number;
+
     const draw = () => {
       const canvas = canvasRef.current;
-      if (!canvas) { rafId = requestAnimationFrame(draw); return; }
+      const videoA = videoARef.current;
+      const videoB = videoBRef.current;
+      if (!canvas || !videoA || !videoB) {
+        rafId = requestAnimationFrame(draw);
+        return;
+      }
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) { rafId = requestAnimationFrame(draw); return; }
 
-      const videoA = videoARef.current;
-      const videoB = videoBRef.current;
+      const state = useEditorStore.getState();
+      const time = state.currentTime;
       const w = canvas.width;
       const h = canvas.height;
 
+      // ── 매 프레임마다 활성 클립/전환 재계산 ──
+      const trans = findActiveTransitionAt(time);
+      const clip = findActiveClipAt(time);
+
+      // ── 비디오 소스 동기화 ──
+      if (trans) {
+        // 전환 모드: A=clipA, B=clipB
+        const srcA = findAssetSrc(trans.clipA.assetId);
+        const srcB = findAssetSrc(trans.clipB.assetId);
+        loadVideoSrc(videoA, srcA, loadedSrcA);
+        loadVideoSrc(videoB, srcB, loadedSrcB);
+
+        // seek (탐색 모드일 때)
+        if (!state.isPlaying) {
+          const localA = time - trans.clipA.startTime + (trans.clipA.inPoint || 0);
+          if (Math.abs(videoA.currentTime - localA) > 0.05) videoA.currentTime = Math.max(0, localA);
+          const localB = time - trans.clipB.startTime + (trans.clipB.inPoint || 0);
+          if (Math.abs(videoB.currentTime - localB) > 0.05) videoB.currentTime = Math.max(0, localB);
+        }
+      } else if (clip) {
+        // 일반 모드: A=현재 클립
+        const srcA = findAssetSrc(clip.assetId);
+        loadVideoSrc(videoA, srcA, loadedSrcA);
+
+        if (!state.isPlaying) {
+          const localA = time - clip.startTime + (clip.inPoint || 0);
+          if (Math.abs(videoA.currentTime - localA) > 0.05) videoA.currentTime = Math.max(0, localA);
+        }
+      }
+
+      // ── 렌더링 ──
       ctx.clearRect(0, 0, w, h);
 
-      // 현재 스토어 시간 (클로저 말고 최신값)
-      const state = useEditorStore.getState();
-      const time = state.currentTime;
+      if (trans) {
+        const readyA = isVideoReady(videoA);
+        const readyB = isVideoReady(videoB);
 
-      if (activeTransition) {
-        const srcA = videoA && isVideoReady(videoA) ? videoA : null;
-        const srcB = videoB && isVideoReady(videoB) ? videoB : null;
+        if (readyA && readyB) {
+          // 전환 효과 적용
+          const defId = `transition-${trans.transition.type}`;
+          const def = effectRegistry.get(defId);
 
-        if (srcA && srcB) {
-          // 전환 효과 렌더링 시도
-          const defId = `transition-${activeTransition.transition.type}`;
-          try {
-            renderFrame({
-              canvas, ctx, width: w, height: h,
-              fps, currentTime: time,
-              videoA: srcA, videoB: srcB, imageA: null,
-              activeEffects: [],
-              transition: {
-                definitionId: defId,
-                progress: activeTransition.progress,
-                duration: activeTransition.transition.duration,
-              },
-            });
-          } catch {
-            // 폴백: 수동 dissolve (비율 보정)
-            ctx.globalAlpha = 1 - activeTransition.progress;
-            drawWithAspect(srcA, ctx, w, h);
-            ctx.globalAlpha = activeTransition.progress;
-            drawWithAspect(srcB, ctx, w, h);
+          if (def) {
+            try {
+              // 효과의 draw 함수 직접 호출
+              const result = def.render({
+                time,
+                progress: trans.progress,
+                params: { progress: trans.progress, duration: trans.transition.duration },
+                canvas, ctx,
+                inputA: videoA,
+                inputB: videoB,
+                width: w, height: h, fps,
+              });
+              if (result.type === 'canvas') {
+                result.draw(ctx);
+              }
+            } catch (e) {
+              console.warn('[PreviewArea] transition render error:', e);
+              // 폴백 dissolve
+              ctx.globalAlpha = 1 - trans.progress;
+              drawWithAspect(videoA, ctx, w, h);
+              ctx.globalAlpha = trans.progress;
+              drawWithAspect(videoB, ctx, w, h);
+              ctx.globalAlpha = 1;
+            }
+          } else {
+            // 정의 없음 → 수동 dissolve
+            ctx.globalAlpha = 1 - trans.progress;
+            drawWithAspect(videoA, ctx, w, h);
+            ctx.globalAlpha = trans.progress;
+            drawWithAspect(videoB, ctx, w, h);
             ctx.globalAlpha = 1;
           }
-        } else if (srcA) {
-          drawWithAspect(srcA, ctx, w, h);
-        } else if (srcB) {
-          drawWithAspect(srcB, ctx, w, h);
+        } else if (readyA) {
+          drawWithAspect(videoA, ctx, w, h);
+        } else if (readyB) {
+          drawWithAspect(videoB, ctx, w, h);
         }
-      } else if (videoA && isVideoReady(videoA)) {
+      } else if (isVideoReady(videoA)) {
         drawWithAspect(videoA, ctx, w, h);
       }
 
@@ -287,18 +277,15 @@ export function PreviewArea() {
 
     rafId = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafId);
-  }, [activeClip, activeTransition, fps, drawWithAspect]);
+  }, [fps]);  // ★ 최소 의존성: 모든 state는 getState()로 직접 참조
 
   /* ─── 컨트롤 ─── */
   const stepFrame = useCallback((dir: number) => {
-    const frameDur = 1 / fps;
     const state = useEditorStore.getState();
-    setCurrentTime(Math.max(0, state.currentTime + dir * frameDur));
+    setCurrentTime(Math.max(0, state.currentTime + dir / fps));
   }, [fps, setCurrentTime]);
 
-  const handleTogglePlay = useCallback(() => {
-    togglePlay(); // ★ 스토어의 실제 함수
-  }, [togglePlay]);
+  const handleTogglePlay = useCallback(() => { togglePlay(); }, [togglePlay]);
 
   const resetTime = useCallback(() => {
     useEditorStore.setState({ isPlaying: false });
