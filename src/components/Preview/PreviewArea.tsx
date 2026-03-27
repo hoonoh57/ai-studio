@@ -203,6 +203,7 @@ export function PreviewArea(): React.ReactElement {
   const project = useEditorStore((s) => s.project);
   const togglePlay = useEditorStore((s) => s.togglePlay);
   const setCurrentTime = useEditorStore((s) => s.setCurrentTime);
+  const transitions = useEditorStore((s) => s.transitions); // ★ FIX: store 최상위에서 읽기
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const videoRefB = useRef<HTMLVideoElement>(null); /* ★ NEW: 전환용 두 번째 비디오 */
@@ -225,8 +226,7 @@ export function PreviewArea(): React.ReactElement {
 
   /* ★ NEW: 현재 시간에 활성화된 전환 효과 감지 */
   const activeTransition: TransitionState | null = useMemo(() => {
-    const transitions = project.transitions;
-    if (!transitions || transitions.length === 0) return null;
+    if (!transitions || transitions.length === 0) return null; // ★ FIX: store의 transitions 사용
 
     for (const tr of transitions) {
       // clipA(from)와 clipB(to) 찾기
@@ -264,7 +264,7 @@ export function PreviewArea(): React.ReactElement {
       }
     }
     return null;
-  }, [project.tracks, project.assets, project.transitions, currentTime]);
+  }, [project.tracks, project.assets, transitions, currentTime]); // ★ FIX
 
   // Playback Loop
   useEffect(() => {
