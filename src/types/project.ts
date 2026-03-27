@@ -133,8 +133,8 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     showKeyframes: false,
     showEffectsStack: false,
     showSafeZone: false,
-    showWaveform: false,
-    showThumbnailStrip: false,
+    showWaveform: true,
+    showThumbnailStrip: true,
     showAdvancedTrim: false,
     showGraphEditor: false,
     showNodeColor: false,
@@ -181,3 +181,64 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     showFFmpegCustom: true,
   },
 };
+
+// === Timeline Engine Types (A-1 Extension) ===
+
+export type TrimMode = 'normal' | 'ripple' | 'roll' | 'slip' | 'slide';
+
+export interface Marker {
+  readonly id: string;
+  readonly time: number;
+  readonly label: string;
+  readonly color: string;
+}
+
+export interface InOutRange {
+  readonly inPoint: number | null;
+  readonly outPoint: number | null;
+}
+
+export interface Transition {
+  readonly id: string;
+  readonly type: string;           // 'cross-dissolve' | 'dip-to-black' | 'wipe-left' ...
+  readonly duration: number;       // seconds
+  readonly clipAId: string;
+  readonly clipBId: string;
+}
+
+export interface SnapPoint {
+  readonly time: number;
+  readonly source: 'clip-start' | 'clip-end' | 'playhead' | 'marker' | 'in-out';
+  readonly trackId?: string;
+}
+
+export interface TimelineDragState {
+  readonly type: 'move' | 'trim-left' | 'trim-right';
+  readonly clipId: string;
+  readonly startX: number;
+  readonly origStart: number;
+  readonly origEnd: number;
+  readonly origSourceStart: number;
+  readonly origSourceEnd: number;
+}
+
+export interface WaveformData {
+  readonly assetId: string;
+  readonly peaks: readonly number[];   // normalized 0-1
+  readonly sampleRate: number;
+  readonly duration: number;
+}
+
+export interface ThumbnailData {
+  readonly assetId: string;
+  readonly frames: readonly string[];  // data URL or blob URL per interval
+  readonly interval: number;           // seconds per frame
+}
+
+// Project 확장 (기존 필드 유지, 새 필드는 optional)
+// 방법: 별도 확장 인터페이스 사용
+export interface ProjectExtension {
+  readonly markers?: readonly Marker[];
+  readonly transitions?: readonly Transition[];
+  readonly inOut?: InOutRange;
+}

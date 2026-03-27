@@ -177,6 +177,7 @@ export default function TopBar() {
       {/* Logo */}
       <div style={s.logoSection}>
         <span style={s.logoText}>AI-STUDIO</span>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 400, opacity: 0.6 }}>v0.33.0327-08</span>
       </div>
 
       <div style={s.divider} />

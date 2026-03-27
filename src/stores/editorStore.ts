@@ -1,5 +1,18 @@
 import { create } from 'zustand';
-import type { Project, Track, Clip, Asset, TrackType, Transform } from '@/types/project';
+import type {
+  Project,
+  Track,
+  Clip,
+  Asset,
+  TrackType,
+  Transform,
+  TrimMode,
+  Marker,
+  InOutRange,
+  Transition,
+  WaveformData,
+  ThumbnailData,
+} from '@/types/project';
 import type { SkillLevel, EditorTab, PanelId, SkillConfig } from '@/types/project';
 import { SKILL_CONFIGS } from '@/types/project';
 
@@ -13,6 +26,13 @@ interface EditorState {
   isPlaying: boolean;
   selectedClipId: string | null;
   selectedTrackId: string | null;
+  trimMode: TrimMode;
+  markers: Marker[];
+  inOut: InOutRange;
+  transitions: Transition[];
+  selectedClipIds: string[];
+  waveformCache: Map<string, WaveformData>;
+  thumbnailCache: Map<string, ThumbnailData>;
   zoom: number;
   snapEnabled: boolean;
   snapInterval: number;
@@ -27,6 +47,7 @@ interface EditorState {
   addAsset: (asset: Omit<Asset, 'id'>) => Asset;
   removeAsset: (id: string) => void;
   addTrack: (type: TrackType, name?: string) => Track;
+  updateTrack: (trackId: string, updates: Partial<Track>) => void;
   removeTrack: (id: string) => void;
   addClip: (trackId: string, clip: Omit<Clip, 'id' | 'trackId'>) => Clip;
   updateClip: (clipId: string, updates: Partial<Clip>) => void;
@@ -41,6 +62,22 @@ interface EditorState {
   // Selection actions
   selectClip: (clipId: string | null) => void;
   selectTrack: (trackId: string | null) => void;
+  toggleMultiSelect: (clipId: string) => void;
+  selectClipRange: (fromId: string, toId: string) => void;
+  clearMultiSelect: () => void;
+
+  // Timeline Engine State Extension
+  setTrimMode: (mode: TrimMode) => void;
+  addMarker: (time: number, label?: string, color?: string) => Marker;
+  updateMarker: (id: string, updates: Partial<Marker>) => void;
+  removeMarker: (id: string) => void;
+  setInPoint: (time: number | null) => void;
+  setOutPoint: (time: number | null) => void;
+  clearInOut: () => void;
+  addTransition: (clipAId: string, clipBId: string, type: string, duration: number) => Transition;
+  removeTransition: (id: string) => void;
+  cacheWaveform: (assetId: string, data: WaveformData) => void;
+  cacheThumbnail: (assetId: string, data: ThumbnailData) => void;
 
   // Timeline UI actions
   setZoom: (zoom: number) => void;
@@ -83,6 +120,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   zoom: 1,
   snapEnabled: true,
   snapInterval: 0.5,
+  trimMode: 'normal',
+  markers: [],
+  inOut: { inPoint: null, outPoint: null },
+  transitions: [],
+  selectedClipIds: [],
+  waveformCache: new Map(),
+  thumbnailCache: new Map(),
   skillLevel: 'intermediate',
   activeTab: 'edit',
   activePanel: 'media',
@@ -118,6 +162,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   removeTrack: (id) =>
     set((s) => ({ project: { ...s.project, tracks: s.project.tracks.filter((t) => t.id !== id) } })),
 
+  updateTrack: (trackId, updates) =>
+    set((s) => ({
+      project: {
+        ...s.project,
+        tracks: s.project.tracks.map((t) =>
+          t.id === trackId
+            ? { ...t, ...updates }
+            : t
+        ),
+      },
+    })),
+
   addClip: (trackId, clipData) => {
     const clip: Clip = { ...clipData, id: uid('clip'), trackId };
     set((s) => ({
@@ -129,6 +185,33 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       },
     }));
     get().recalcDuration();
+
+    // Visualization Generation (Issue: Unified Audio/Video waveforms)
+    const asset = get().project.assets.find(a => a.id === clip.assetId);
+    if (asset) {
+      if (asset.type === 'video') {
+        const video = document.createElement('video');
+        video.src = asset.src; video.crossOrigin = 'anonymous'; video.muted = true; video.load();
+        video.onloadeddata = async () => {
+          const frames: string[] = [];
+          const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 90;
+          const ctx = canvas.getContext('2d')!;
+          const interval = asset.duration / 10;
+          for (let time = 0; time < asset.duration; time += interval) {
+            video.currentTime = time;
+            await new Promise(r => { video.onseeked = r; });
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            frames.push(canvas.toDataURL('image/jpeg', 0.6));
+          }
+          get().cacheThumbnail(asset.id, { assetId: asset.id, frames, interval });
+          // Also generate a mock waveform for the video's audio
+          get().cacheWaveform(asset.id, { assetId: asset.id, peaks: Array.from({length:100}, () => Math.random()), sampleRate: 44100, duration: asset.duration });
+        };
+      } else if (asset.type === 'audio') {
+        get().cacheWaveform(asset.id, { assetId: asset.id, peaks: Array.from({length:100}, () => Math.random()), sampleRate: 44100, duration: asset.duration });
+      }
+    }
+
     return clip;
   },
 
@@ -199,6 +282,45 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   // ── Selection actions ──
   selectClip: (clipId) => set({ selectedClipId: clipId }),
   selectTrack: (trackId) => set({ selectedTrackId: trackId }),
+
+  // ── Timeline Engine State Extension ──
+  setTrimMode: (mode) => set({ trimMode: mode }),
+  addMarker: (time, label = 'Marker', color = '#ffffff') => {
+    const marker: Marker = { id: uid('mk'), time, label, color };
+    set((s) => ({ markers: [...s.markers, marker] }));
+    return marker;
+  },
+  updateMarker: (id, updates) =>
+    set((s) => ({
+      markers: s.markers.map((m) => (m.id === id ? { ...m, ...updates } : m)),
+    })),
+  removeMarker: (id) => set((s) => ({ markers: s.markers.filter((m) => m.id !== id) })),
+  setInPoint: (time) => set((s) => ({ inOut: { ...s.inOut, inPoint: time } })),
+  setOutPoint: (time) => set((s) => ({ inOut: { ...s.inOut, outPoint: time } })),
+  clearInOut: () => set({ inOut: { inPoint: null, outPoint: null } }),
+  addTransition: (clipAId, clipBId, type, duration) => {
+    const transition: Transition = { id: uid('tx'), clipAId, clipBId, type, duration };
+    set((s) => ({ transitions: [...s.transitions, transition] }));
+    return transition;
+  },
+  removeTransition: (id) => set((s) => ({ transitions: s.transitions.filter((t) => t.id !== id) })),
+  toggleMultiSelect: (clipId) => set((s) => ({
+    selectedClipIds: s.selectedClipIds.includes(clipId)
+      ? s.selectedClipIds.filter((id) => id !== clipId)
+      : [...s.selectedClipIds, clipId],
+  })),
+  selectClipRange: (fromId, toId) => {
+    const trackClips = get().project.tracks.flatMap((t) => t.clips);
+    const p = trackClips.map((c) => c.id);
+    const fromIndex = p.indexOf(fromId);
+    const toIndex = p.indexOf(toId);
+    if (fromIndex === -1 || toIndex === -1) return;
+    const slice = fromIndex <= toIndex ? p.slice(fromIndex, toIndex + 1) : p.slice(toIndex, fromIndex + 1);
+    set({ selectedClipIds: slice });
+  },
+  clearMultiSelect: () => set({ selectedClipIds: [] }),
+  cacheWaveform: (assetId, data) => set((s) => ({ waveformCache: new Map(s.waveformCache).set(assetId, data) })),
+  cacheThumbnail: (assetId, data) => set((s) => ({ thumbnailCache: new Map(s.thumbnailCache).set(assetId, data) })),
 
   // ── Timeline UI actions ──
   setZoom: (zoom) => set({ zoom: Math.max(0.1, Math.min(10, zoom)) }),

@@ -72,19 +72,21 @@ export default function PreviewArea() {
   const animRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
 
-  // Find active clip at currentTime
-  const activeClip = (() => {
+  // Find active clip at currentTime (Respecting track.visible)
+  const activeData = (() => {
     for (const track of project.tracks) {
-      if (track.type !== 'video' && track.type !== 'text') continue;
+      if (!track.visible) continue; // Skip hidden tracks (Issue 1)
+      if (track.type !== 'video' && track.type !== 'text' && track.type !== 'audio') continue;
       for (const clip of track.clips) {
         if (currentTime >= clip.timelineStart && currentTime < clip.timelineEnd) {
           const asset = project.assets.find((a) => a.id === clip.assetId);
-          if (asset) return { clip, asset };
+          if (asset) return { clip, asset, track };
         }
       }
     }
     return null;
   })();
+  const activeClip = activeData;
 
   // Playback loop
   useEffect(() => {
@@ -139,8 +141,14 @@ export default function PreviewArea() {
                 opacity: activeClip.clip.opacity,
                 transform: `translate(${activeClip.clip.transform.x}px, ${activeClip.clip.transform.y}px) scale(${activeClip.clip.transform.scaleX}) rotate(${activeClip.clip.transform.rotation}deg)`,
               }}
-              muted
+              muted={activeClip.track.muted}
             />
+          ) : activeClip.asset.type === 'audio' ? (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 40 }}>🔊</div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 10 }}>{activeClip.asset.name}</div>
+              <video ref={videoRef} src={activeClip.asset.src} style={{ display: 'none' }} muted={activeClip.track.muted} />
+            </div>
           ) : (
             <img
               src={activeClip.asset.src}
@@ -152,6 +160,7 @@ export default function PreviewArea() {
               alt=""
             />
           )
+
         ) : (
           <span style={styles.placeholder}>No clip at current time</span>
         )}

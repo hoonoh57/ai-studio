@@ -1,484 +1,183 @@
-import React, { useRef, useCallback, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
+import TimelineToolbar from './TimelineToolbar';
+import TrackHeader from './TrackHeader';
+import TrackRow from './TrackRow';
+import TimelineRuler from './TimelineRuler';
+import Playhead from './Playhead';
+import MarkerTrack from './MarkerTrack';
 
 const PIXELS_PER_SECOND_BASE = 50;
 
-const clipColors: Record<string, string> = {
-  video: 'var(--clip-video)',
-  audio: 'var(--clip-audio)',
-  text: 'var(--clip-text)',
-  effect: 'var(--clip-effect)',
-};
-
-const styles: Record<string, React.CSSProperties> = {
-  panel: {
-    height: 'var(--timeline-height)',
-    minHeight: 200,
-    flexShrink: 0,
-    background: 'var(--bg-panel)',
-    borderTop: '2px solid var(--border)',
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-  },
-  toolbar: {
-    height: 32,
-    background: 'var(--bg-secondary)',
-    borderBottom: '1px solid var(--border)',
-    display: 'flex',
-    alignItems: 'center',
-    padding: '0 8px',
-    gap: 8,
-    flexShrink: 0,
-  },
-  toolBtn: {
-    background: 'transparent',
-    border: 'none',
-    color: 'var(--text-secondary)',
-    fontSize: 11,
-    cursor: 'pointer',
-    padding: '2px 6px',
-    borderRadius: 3,
-  },
-  toolBtnActive: {
-    background: 'var(--accent)',
-    color: '#fff',
-  },
-  zoomSlider: {
-    width: 80,
-    height: 4,
-    accentColor: 'var(--accent)',
-  },
-  body: {
-    flex: 1,
-    display: 'flex',
-    overflow: 'hidden',
-  },
-  trackLabels: {
-    width: 100,
-    flexShrink: 0,
-    background: 'var(--bg-secondary)',
-    borderRight: '1px solid var(--border)',
-    overflow: 'hidden',
-  },
-  trackLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    padding: '0 8px',
-    fontSize: 10,
-    color: 'var(--text-secondary)',
-    borderBottom: '1px solid var(--border)',
-    gap: 4,
-  },
-  scrollArea: {
-    flex: 1,
-    overflowX: 'auto',
-    overflowY: 'hidden',
-    position: 'relative',
-  },
-  ruler: {
-    height: 24,
-    position: 'sticky',
-    top: 0,
-    zIndex: 5,
-    background: 'var(--bg-secondary)',
-    borderBottom: '1px solid var(--border)',
-  },
-  tracksContainer: {
-    position: 'relative',
-  },
-  trackRow: {
-    position: 'relative',
-    borderBottom: '1px solid var(--border)',
-    background: 'transparent',
-  },
-  clip: {
-    position: 'absolute',
-    top: 4,
-    borderRadius: 4,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    padding: '0 8px',
-    fontSize: 10,
-    color: '#fff',
-    fontWeight: 500,
-    overflow: 'hidden',
-    whiteSpace: 'nowrap',
-    textOverflow: 'ellipsis',
-    userSelect: 'none',
-  },
-  clipLabel: {
-    flex: 1,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    pointerEvents: 'none',
-  },
-  handleLeft: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 6,
-    cursor: 'col-resize',
-    borderRadius: '4px 0 0 4px',
-  },
-  handleRight: {
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    bottom: 0,
-    width: 6,
-    cursor: 'col-resize',
-    borderRadius: '0 4px 4px 0',
-  },
-  playhead: {
-    position: 'absolute',
-    top: 0,
-    width: 2,
-    background: 'var(--playhead)',
-    zIndex: 10,
-    pointerEvents: 'none',
-  },
-};
-
 export default function TimelinePanel() {
   const project = useEditorStore((s) => s.project);
-  const currentTime = useEditorStore((s) => s.currentTime);
   const zoom = useEditorStore((s) => s.zoom);
-  const snapEnabled = useEditorStore((s) => s.snapEnabled);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
-  const setCurrentTime = useEditorStore((s) => s.setCurrentTime);
-  const setZoom = useEditorStore((s) => s.setZoom);
-  const toggleSnap = useEditorStore((s) => s.toggleSnap);
-  const togglePlay = useEditorStore((s) => s.togglePlay);
-  const selectClip = useEditorStore((s) => s.selectClip);
-  const addClip = useEditorStore((s) => s.addClip);
-  const updateClip = useEditorStore((s) => s.updateClip);
-  const removeClip = useEditorStore((s) => s.removeClip);
-  const splitClip = useEditorStore((s) => s.splitClip);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{
-    type: 'move' | 'trim-left' | 'trim-right';
-    clipId: string;
-    startX: number;
-    origStart: number;
-    origEnd: number;
-  } | null>(null);
+  const snapEnabled = useEditorStore((s) => s.snapEnabled);
+  const markers = useEditorStore((s) => s.markers);
 
+  const {
+    setCurrentTime, setZoom, addMarker, togglePlay, removeClip, splitClip, selectClip, addClip, updateClip,
+  } = useEditorStore();
+
+  const scrollRef = useRef<HTMLDivElement>(null);
   const pps = PIXELS_PER_SECOND_BASE * zoom;
   const totalWidth = project.duration * pps;
 
+  // AUTO-SCROLL handler
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
-      switch (e.code) {
-        case 'Space':
-          e.preventDefault();
-          togglePlay();
-          break;
-        case 'Delete':
-        case 'Backspace':
-          if (selectedClipId) removeClip(selectedClipId);
-          break;
-        case 'KeyC':
-          if (selectedClipId) {
-            splitClip(selectedClipId, useEditorStore.getState().currentTime);
-          }
-          break;
-        case 'ArrowLeft':
-          setCurrentTime(Math.max(0, currentTime - 1 / project.fps));
-          break;
-        case 'ArrowRight':
-          setCurrentTime(currentTime + 1 / project.fps);
-          break;
+    const unsub = useEditorStore.subscribe(
+      (s) => s.currentTime,
+      (t) => {
+        if (!scrollRef.current) return;
+        const scroll = scrollRef.current;
+        const x = t * pps;
+        const vs = scroll.scrollLeft;
+        const ve = scroll.scrollLeft + scroll.offsetWidth;
+        if (x > ve - 100) scroll.scrollLeft = x - 100;
+        else if (x < vs + 100) scroll.scrollLeft = Math.max(0, x - 100);
+      }
+    );
+    return unsub;
+  }, [pps]);
+
+  const snapPoints = useMemo(() => {
+    if (!snapEnabled) return [];
+    const points = new Set([0, project.duration]);
+    markers.forEach(m => points.add(m.time));
+    project.tracks.forEach(t => t.clips.forEach(c => { points.add(c.timelineStart); points.add(c.timelineEnd); }));
+    return Array.from(points);
+  }, [snapEnabled, project.duration, project.tracks, markers]);
+
+  const snapValue = (val: number, threshold: number = 0.2) => {
+    if (!snapEnabled) return val;
+    let closest = val;
+    let minDiff = threshold;
+    snapPoints.forEach(p => { const diff = Math.abs(val - p); if (diff < minDiff) { minDiff = diff; closest = p; } });
+    return closest;
+  };
+
+  const dragRef = useRef<any>(null);
+  
+  const startDrag = useCallback((e: React.MouseEvent, type: any, clipId: string, origStart: number, origEnd: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    selectClip(clipId);
+    dragRef.current = { type, clipId, startX: e.clientX, origStart, origEnd };
+    
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      const d = dragRef.current;
+      const dt = (ev.clientX - d.startX) / pps;
+      const dur = d.origEnd - d.origStart;
+      
+      if (d.type === 'move') {
+        const s = snapValue(d.origStart + dt);
+        updateClip(d.clipId, { timelineStart: s, timelineEnd: s + dur });
+      } else if (d.type === 'trim-left') {
+        const s = snapValue(Math.max(0, d.origStart + dt));
+        if (s < d.origEnd - 0.1) updateClip(d.clipId, { timelineStart: s });
+      } else if (d.type === 'trim-right') {
+        const e = snapValue(d.origEnd + dt);
+        if (e > d.origStart + 0.1) updateClip(d.clipId, { timelineEnd: e });
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [selectedClipId, currentTime]);
+    
+    const onUp = () => { 
+      dragRef.current = null; 
+      window.removeEventListener('mousemove', onMove); 
+      window.removeEventListener('mouseup', onUp); 
+    };
+    
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [pps, selectClip, updateClip, snapEnabled, snapPoints]);
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent, trackId: string) => {
-      e.preventDefault();
-      const assetId = e.dataTransfer.getData('assetId');
-      if (!assetId) return;
-      const asset = project.assets.find((a) => a.id === assetId);
-      if (!asset) return;
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as any)?.tagName)) return;
+      
+      const { currentTime, project: proj, setCurrentTime: setTime, splitClip: sClip, togglePlay: tPlay, selectedClipId: selId, addMarker: aMarker } = useEditorStore.getState();
+      const step = 1 / (proj.fps || 30);
 
-      const rect = e.currentTarget.getBoundingClientRect();
-      const scrollLeft = scrollRef.current?.scrollLeft || 0;
-      const x = e.clientX - rect.left + scrollLeft;
-      const startTime = Math.max(0, x / pps);
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'PageDown' || e.key === 'PageUp' || e.key === 'Home' || e.key === 'End' || e.key === ' ') {
+        e.preventDefault(); e.stopImmediatePropagation();
+        if (e.key === 'ArrowRight') setTime(currentTime + (e.shiftKey ? 1 : step));
+        else if (e.key === 'ArrowLeft') setTime(currentTime - (e.shiftKey ? 1 : step));
+        else if (e.key === 'PageDown') setTime(currentTime + 5);
+        else if (e.key === 'PageUp') setTime(currentTime - 5);
+        else if (e.key === 'Home') setTime(0);
+        else if (e.key === 'End') setTime(proj.duration);
+        else if (e.key === ' ') tPlay();
+      } else if (e.key === 'c' || e.key === 'C') {
+        if (selId) sClip(selId, currentTime);
+      } else if (e.key === 'm' || e.key === 'M') {
+        aMarker(currentTime);
+      }
+    };
+    document.addEventListener('keydown', handleKey, { capture: true });
+    return () => document.removeEventListener('keydown', handleKey, { capture: true });
+  }, []);
 
-      addClip(trackId, {
-        assetId,
-        timelineStart: startTime,
-        timelineEnd: startTime + asset.duration,
-        sourceStart: 0,
-        sourceEnd: asset.duration,
-        transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 },
-        opacity: 1,
-        blendMode: 'normal',
-        speed: 1,
-        filters: [],
-        locked: false,
-      });
-    },
-    [project.assets, pps, addClip],
-  );
+  const handleDrop = useCallback((e: React.DragEvent, trackId: string) => {
+    e.preventDefault();
+    const assetId = e.dataTransfer.getData('assetId');
+    const asset = project.assets.find(a => a.id === assetId);
+    if (!asset || !scrollRef.current) return;
+    const x = e.clientX - scrollRef.current.getBoundingClientRect().left + scrollRef.current.scrollLeft;
+    addClip(trackId, { assetId, timelineStart: x / pps, timelineEnd: x / pps + asset.duration, sourceStart: 0, sourceEnd: asset.duration, speed: 1, opacity: 1, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, blendMode: 'normal', filters: [], locked: false });
+  }, [project.assets, pps, addClip]);
 
-  const startDrag = useCallback(
-    (
-      e: React.MouseEvent,
-      type: 'move' | 'trim-left' | 'trim-right',
-      clipId: string,
-      origStart: number,
-      origEnd: number,
-    ) => {
-      e.stopPropagation();
-      e.preventDefault();
-      selectClip(clipId);
-      dragRef.current = { type, clipId, startX: e.clientX, origStart, origEnd };
-
-      const onMove = (ev: MouseEvent) => {
-        if (!dragRef.current) return;
-        const d = dragRef.current;
-        const dx = ev.clientX - d.startX;
-        const dt = dx / pps;
-
-        if (d.type === 'move') {
-          const newStart = Math.max(0, d.origStart + dt);
-          const duration = d.origEnd - d.origStart;
-          updateClip(d.clipId, {
-            timelineStart: newStart,
-            timelineEnd: newStart + duration,
-          });
-        } else if (d.type === 'trim-left') {
-          const newStart = Math.max(0, d.origStart + dt);
-          if (newStart < d.origEnd - 0.1) {
-            updateClip(d.clipId, { timelineStart: newStart });
-          }
-        } else if (d.type === 'trim-right') {
-          const newEnd = d.origEnd + dt;
-          if (newEnd > d.origStart + 0.1) {
-            updateClip(d.clipId, { timelineEnd: newEnd });
-          }
-        }
-      };
-
-      const onUp = () => {
-        dragRef.current = null;
-        useEditorStore.getState().recalcDuration();
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
-      };
-
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
-    },
-    [pps, selectClip, updateClip],
-  );
-
-  const handleRulerClick = useCallback(
-    (e: React.MouseEvent) => {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const scrollLeft = scrollRef.current?.scrollLeft || 0;
-      const x = e.clientX - rect.left + scrollLeft;
-      setCurrentTime(Math.max(0, x / pps));
-    },
-    [pps, setCurrentTime],
-  );
-
-  const rulerTicks = [];
-  const tickInterval = zoom >= 2 ? 1 : zoom >= 0.5 ? 5 : 10;
-  for (let t = 0; t <= project.duration; t += tickInterval) {
-    rulerTicks.push(
-      <div
-        key={t}
-        style={{
-          position: 'absolute',
-          left: t * pps,
-          top: 0,
-          height: '100%',
-          borderLeft: '1px solid var(--border)',
-          display: 'flex',
-          alignItems: 'flex-end',
-          paddingLeft: 3,
-          paddingBottom: 2,
-          fontSize: 9,
-          color: 'var(--text-muted)',
-        }}
-      >
-        {Math.floor(t / 60)}:{(t % 60).toString().padStart(2, '0')}
-      </div>,
-    );
-  }
+  const handleRulerClick = (e: React.MouseEvent) => {
+    if (!scrollRef.current) return;
+    const rect = scrollRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left + scrollRef.current.scrollLeft;
+    setCurrentTime(x / pps);
+  };
 
   return (
-    <div style={styles.panel}>
-      <div style={styles.toolbar}>
-        <button
-          style={{
-            ...styles.toolBtn,
-            ...(snapEnabled ? styles.toolBtnActive : {}),
-          }}
-          onClick={toggleSnap}
-        >
-          🧲 Snap
-        </button>
-        <button style={styles.toolBtn} title="Split (C)">
-          ✂ Split
-        </button>
-        <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Zoom</span>
-        <input
-          type="range"
-          min="0.2"
-          max="5"
-          step="0.1"
-          value={zoom}
-          onChange={(e) => setZoom(parseFloat(e.target.value))}
-          style={styles.zoomSlider}
-        />
-      </div>
-      <div style={styles.body}>
-        <div style={styles.trackLabels}>
-          <div
-            style={{ height: 24, borderBottom: '1px solid var(--border)' }}
-          />
-          {project.tracks.map((track) => (
-            <div
-              key={track.id}
-              style={{ ...styles.trackLabel, height: track.height }}
-            >
-              <span>
-                {track.type === 'video'
-                  ? '🎬'
-                  : track.type === 'audio'
-                    ? '🎵'
-                    : '✏️'}
-              </span>
-              <span>{track.name}</span>
-            </div>
-          ))}
+    <div style={{ height: 'var(--timeline-height)', background: 'var(--bg-panel)', display: 'flex', flexDirection: 'column', borderTop: '2px solid var(--border)', overflow: 'hidden' }}>
+      <TimelineToolbar />
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <div style={{ width: 120, background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', zIndex: 100 }}>
+          <div style={{ height: 28, borderBottom: '1px solid var(--border)' }} />
+          <div style={{ height: 20 }} />
+          {project.tracks.map(t => <TrackHeader key={t.id} track={t} />)}
         </div>
 
-        <div style={styles.scrollArea} ref={scrollRef}>
-          <div
-            style={{ ...styles.ruler, width: totalWidth }}
-            onClick={handleRulerClick}
-          >
-            {rulerTicks}
+        <div 
+          style={{ flex: 1, overflowX: 'auto', overflowY: 'hidden', position: 'relative' }} 
+          ref={scrollRef} 
+          tabIndex={-1} 
+          onMouseDown={(e) => { 
+            // Only trigger jump if clicked on the ruler area (top 28px)
+            const top = e.currentTarget.getBoundingClientRect().top;
+            if (e.clientY < top + 28) handleRulerClick(e); 
+          }}
+        >
+          <div style={{ position: 'sticky', top: 0, zIndex: 50, background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)' }}>
+            <TimelineRuler pps={pps} duration={project.duration} zoom={zoom} />
           </div>
 
-          <div
-            style={{
-              ...styles.tracksContainer,
-              width: totalWidth,
-              position: 'relative',
-            }}
-          >
-            {project.tracks.map((track) => (
-              <div
-                key={track.id}
-                style={{ ...styles.trackRow, height: track.height }}
-                onDrop={(e) => handleDrop(e, track.id)}
-                onDragOver={(e) => e.preventDefault()}
-              >
-                {track.clips.map((clip) => {
-                  const left = clip.timelineStart * pps;
-                  const width = (clip.timelineEnd - clip.timelineStart) * pps;
-                  const asset = project.assets.find(
-                    (a) => a.id === clip.assetId,
-                  );
-                  const isSelected = selectedClipId === clip.id;
-                  return (
-                    <div
-                      key={clip.id}
-                      style={{
-                        ...styles.clip,
-                        left,
-                        width,
-                        height: track.height - 8,
-                        background: isSelected
-                          ? 'var(--accent-hover)'
-                          : clipColors[track.type] || 'var(--clip-video)',
-                        border: isSelected
-                          ? '2px solid #fff'
-                          : '1px solid rgba(255,255,255,0.15)',
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        selectClip(clip.id);
-                      }}
-                      onMouseDown={(e) =>
-                        startDrag(
-                          e,
-                          'move',
-                          clip.id,
-                          clip.timelineStart,
-                          clip.timelineEnd,
-                        )
-                      }
-                    >
-                      {/* 왼쪽 트림 핸들 */}
-                      <div
-                        style={styles.handleLeft}
-                        onMouseDown={(e) =>
-                          startDrag(
-                            e,
-                            'trim-left',
-                            clip.id,
-                            clip.timelineStart,
-                            clip.timelineEnd,
-                          )
-                        }
-                        onMouseEnter={(e) =>
-                          (e.currentTarget.style.background =
-                            'rgba(255,255,255,0.3)')
-                        }
-                        onMouseLeave={(e) =>
-                          (e.currentTarget.style.background = 'transparent')
-                        }
-                      />
-                      {/* 클립 이름 */}
-                      <span style={styles.clipLabel}>
-                        {asset?.name || 'Clip'}
-                      </span>
-                      {/* 오른쪽 트림 핸들 */}
-                      <div
-                        style={styles.handleRight}
-                        onMouseDown={(e) =>
-                          startDrag(
-                            e,
-                            'trim-right',
-                            clip.id,
-                            clip.timelineStart,
-                            clip.timelineEnd,
-                          )
-                        }
-                        onMouseEnter={(e) =>
-                          (e.currentTarget.style.background =
-                            'rgba(255,255,255,0.3)')
-                        }
-                        onMouseLeave={(e) =>
-                          (e.currentTarget.style.background = 'transparent')
-                        }
-                      />
-                    </div>
-                  );
-                })}
-              </div>
+          <div style={{ position: 'relative', width: totalWidth, minHeight: '100%', zIndex: 10 }}>
+            <div style={{ height: 20 }} />
+            {project.tracks.map(t => (
+              <TrackRow 
+                key={t.id} track={t} pps={pps} projectAssets={project.assets}
+                selectedClipId={selectedClipId} onSelectClip={selectClip}
+                onDropClip={(e) => handleDrop(e, t.id)}
+                onDragOverTrack={(e) => e.preventDefault()}
+                onMoveStart={(e, clip) => startDrag(e, 'move', clip.id, clip.timelineStart, clip.timelineEnd)}
+                onTrimLeftStart={(e, clip) => startDrag(e, 'trim-left', clip.id, clip.timelineStart, clip.timelineEnd)}
+                onTrimRightStart={(e, clip) => startDrag(e, 'trim-right', clip.id, clip.timelineStart, clip.timelineEnd)}
+              />
             ))}
+          </div>
 
-            <div
-              style={{
-                ...styles.playhead,
-                left: currentTime * pps,
-                height: '100%',
-              }}
-            />
+          {/* Overlays: pointer-events: none ensures clicks PASS THROUGH to tracks below */}
+          <div style={{ position: 'absolute', top: 0, left: 0, width: totalWidth, height: '100%', pointerEvents: 'none', zIndex: 200 }}>
+            <MarkerTrack markers={markers} pps={pps} totalWidth={totalWidth} />
+            <Playhead pps={pps} />
           </div>
         </div>
       </div>
