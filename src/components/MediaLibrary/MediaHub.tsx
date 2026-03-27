@@ -278,19 +278,19 @@ const S: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap',
   },
   favBtn: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    width: FAV_ICON_SIZE + 4,
-    height: FAV_ICON_SIZE + 4,
+    width: 28,
+    height: 28,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     background: 'transparent',
     border: 'none',
     cursor: 'pointer',
-    fontSize: FAV_ICON_SIZE,
-    opacity: 0.6,
+    fontSize: 16,
+    flexShrink: 0,
+    borderRadius: 4,
+    transition: 'opacity 0.15s, background 0.15s',
+    opacity: 0.7,
   },
 
   /* ── 리스트 뷰 ── */
@@ -571,7 +571,7 @@ function AssetCardItem(props: AssetCardItemProps): React.ReactElement {
   const { asset, meta, selected, showTags } = props;
   return (
     <div
-      style={{ ...S.card, ...(selected ? S.cardSelected : {}) }}
+      style={{ ...S.card, ...(selected ? S.cardSelected : {}), position: 'relative' }}
       draggable
       onDragStart={e => props.onDragStart(asset.id, e)}
       onClick={() => props.onSelect(asset.id)}
@@ -600,11 +600,15 @@ function AssetCardItem(props: AssetCardItemProps): React.ReactElement {
           </div>
         )}
       </div>
+      {/* 즐겨찾기 버튼 — flex 행의 마지막 요소로 배치 */}
       <button
         style={S.favBtn}
         onClick={e => { e.stopPropagation(); props.onToggleFav(asset.id); }}
+        onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
+        onMouseLeave={e => { e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.background = 'transparent'; }}
+        title="즐겨찾기"
       >
-        {meta?.favorite ? '★' : '☆'}
+        {meta?.favorite ? '⭐' : '☆'}
       </button>
     </div>
   );
