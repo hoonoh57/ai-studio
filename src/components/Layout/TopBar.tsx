@@ -1,7 +1,27 @@
+// src/components/Layout/TopBar.tsx
 import React from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import type { SkillLevel, EditorTab } from '@/types/project';
 import { SKILL_CONFIGS } from '@/types/project';
+
+// ── 상수 ──
+const BAR_MIN_HEIGHT = 40;
+const LOGO_FONT_SIZE = 13;
+const VERSION_FONT_SIZE = 9;
+const TAB_FONT_SIZE = 12;
+const TAB_PADDING_H = 14;
+const TAB_PADDING_V = 6;
+const PROJECT_NAME_MAX_WIDTH = 200;
+const PROJECT_NAME_FONT_SIZE = 12;
+const BADGE_FONT_SIZE = 10;
+const BADGE_PADDING_H = 8;
+const BADGE_PADDING_V = 2;
+const LEVEL_BTN_FONT_SIZE = 11;
+const DROPDOWN_MIN_WIDTH = 200;
+const DROPDOWN_ITEM_FONT_SIZE = 12;
+const DROPDOWN_DESC_FONT_SIZE = 10;
+const EXPORT_BTN_FONT_SIZE = 11;
+const DIVIDER_HEIGHT = 20;
 
 const TAB_LABELS: Record<EditorTab, string> = {
   'ai-creator': '✨ AI',
@@ -19,82 +39,68 @@ const LEVEL_ICONS: Record<SkillLevel, string> = {
   expert: '⚡',
 };
 
-const s = {
+// ── 스타일 ──
+const S: Record<string, React.CSSProperties> = {
   bar: {
     height: 'var(--topbar-height)',
-    minHeight: 40,
+    minHeight: BAR_MIN_HEIGHT,
     background: 'var(--bg-secondary)',
     borderBottom: '1px solid var(--border)',
     display: 'flex',
     alignItems: 'center',
     padding: '0 12px',
     gap: 0,
-  } as React.CSSProperties,
+  },
   logoSection: {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
     marginRight: 16,
     cursor: 'pointer',
-  } as React.CSSProperties,
+  },
   logoText: {
     fontWeight: 700,
-    fontSize: 13,
+    fontSize: LOGO_FONT_SIZE,
     color: 'var(--accent)',
     letterSpacing: 0.5,
-  } as React.CSSProperties,
+  },
+  version: {
+    fontSize: VERSION_FONT_SIZE,
+    color: 'var(--text-muted)',
+    fontWeight: 400,
+    opacity: 0.6,
+  },
   divider: {
     width: 1,
-    height: 20,
+    height: DIVIDER_HEIGHT,
     background: 'var(--border)',
     margin: '0 8px',
-  } as React.CSSProperties,
+  },
   tabGroup: {
     display: 'flex',
     gap: 2,
     alignItems: 'center',
-  } as React.CSSProperties,
-  tab: (active: boolean) => ({
-    padding: '6px 14px',
-    fontSize: 12,
-    fontWeight: active ? 600 : 400,
-    color: active ? '#fff' : 'var(--text-secondary)',
-    background: active ? 'var(--accent)' : 'transparent',
-    border: 'none',
-    borderRadius: 'var(--radius-sm)',
-    cursor: 'pointer',
-    transition: 'all 150ms ease',
-    fontFamily: 'inherit',
-  } as React.CSSProperties),
-  spacer: { flex: 1 } as React.CSSProperties,
+  },
+  spacer: { flex: 1 },
   projectName: {
-    fontSize: 12,
+    fontSize: PROJECT_NAME_FONT_SIZE,
     color: 'var(--text-secondary)',
-    maxWidth: 200,
+    maxWidth: PROJECT_NAME_MAX_WIDTH,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-  } as React.CSSProperties,
-  badge: (color: string) => ({
-    fontSize: 10,
-    padding: '2px 8px',
-    borderRadius: 10,
-    fontWeight: 600,
-    background: color === 'green' ? 'var(--success)' : 'var(--accent)',
-    color: '#fff',
-    cursor: 'pointer',
-  } as React.CSSProperties),
+  },
   levelSelector: {
-    position: 'relative' as const,
+    position: 'relative',
     display: 'flex',
     alignItems: 'center',
-  } as React.CSSProperties,
+  },
   levelBtn: {
     display: 'flex',
     alignItems: 'center',
     gap: 4,
     padding: '3px 10px',
-    fontSize: 11,
+    fontSize: LEVEL_BTN_FONT_SIZE,
     fontWeight: 500,
     color: 'var(--text-secondary)',
     background: 'var(--bg-surface)',
@@ -102,9 +108,9 @@ const s = {
     borderRadius: 'var(--radius-sm)',
     cursor: 'pointer',
     fontFamily: 'inherit',
-  } as React.CSSProperties,
+  },
   dropdown: {
-    position: 'absolute' as const,
+    position: 'absolute',
     top: '100%',
     right: 0,
     marginTop: 4,
@@ -113,32 +119,17 @@ const s = {
     borderRadius: 'var(--radius-md)',
     padding: 4,
     zIndex: 1000,
-    minWidth: 200,
+    minWidth: DROPDOWN_MIN_WIDTH,
     boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-  } as React.CSSProperties,
-  dropdownItem: (active: boolean) => ({
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '8px 12px',
-    fontSize: 12,
-    color: active ? '#fff' : 'var(--text-primary)',
-    background: active ? 'var(--accent)' : 'transparent',
-    border: 'none',
-    borderRadius: 'var(--radius-sm)',
-    cursor: 'pointer',
-    width: '100%',
-    textAlign: 'left' as const,
-    fontFamily: 'inherit',
-  } as React.CSSProperties),
+  },
   dropdownDesc: {
-    fontSize: 10,
+    fontSize: DROPDOWN_DESC_FONT_SIZE,
     color: 'var(--text-muted)',
     marginTop: 2,
-  } as React.CSSProperties,
+  },
   exportBtn: {
     padding: '5px 14px',
-    fontSize: 11,
+    fontSize: EXPORT_BTN_FONT_SIZE,
     fontWeight: 600,
     color: '#fff',
     background: 'var(--accent)',
@@ -146,22 +137,102 @@ const s = {
     borderRadius: 'var(--radius-sm)',
     cursor: 'pointer',
     fontFamily: 'inherit',
-  } as React.CSSProperties,
+  },
 };
 
-export default function TopBar() {
-  const projectName = useEditorStore((st) => st.project.name);
-  const exportProject = useEditorStore((st) => st.exportProject);
-  const skillLevel = useEditorStore((st) => st.skillLevel);
-  const activeTab = useEditorStore((st) => st.activeTab);
-  const setSkillLevel = useEditorStore((st) => st.setSkillLevel);
-  const setActiveTab = useEditorStore((st) => st.setActiveTab);
+function tabStyle(active: boolean): React.CSSProperties {
+  return {
+    padding: `${TAB_PADDING_V}px ${TAB_PADDING_H}px`,
+    fontSize: TAB_FONT_SIZE,
+    fontWeight: active ? 600 : 400,
+    color: active ? '#fff' : 'var(--text-secondary)',
+    background: active ? 'var(--accent)' : 'transparent',
+    border: 'none',
+    borderRadius: 'var(--radius-sm)',
+    cursor: 'pointer',
+    transition: 'all 150ms ease',
+    fontFamily: 'inherit',
+  };
+}
 
+function badgeStyle(color: string): React.CSSProperties {
+  return {
+    fontSize: BADGE_FONT_SIZE,
+    padding: `${BADGE_PADDING_V}px ${BADGE_PADDING_H}px`,
+    borderRadius: 10,
+    fontWeight: 600,
+    background: color === 'green' ? 'var(--success)' : 'var(--accent)',
+    color: '#fff',
+    cursor: 'pointer',
+  };
+}
+
+function dropdownItemStyle(active: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '8px 12px',
+    fontSize: DROPDOWN_ITEM_FONT_SIZE,
+    color: active ? '#fff' : 'var(--text-primary)',
+    background: active ? 'var(--accent)' : 'transparent',
+    border: 'none',
+    borderRadius: 'var(--radius-sm)',
+    cursor: 'pointer',
+    width: '100%',
+    textAlign: 'left',
+    fontFamily: 'inherit',
+  };
+}
+
+// ── 레벨 드롭다운 서브 컴포넌트 ──
+interface LevelDropdownProps {
+  readonly current: SkillLevel;
+  readonly onSelect: (level: SkillLevel) => void;
+  readonly onClose: () => void;
+}
+
+function LevelDropdown(props: LevelDropdownProps): React.ReactElement {
+  return (
+    <div style={S.dropdown}>
+      {(Object.keys(SKILL_CONFIGS) as SkillLevel[]).map(level => {
+        const cfg = SKILL_CONFIGS[level];
+        const isActive = props.current === level;
+        return (
+          <button
+            key={level}
+            style={dropdownItemStyle(isActive)}
+            onClick={() => { props.onSelect(level); props.onClose(); }}
+            onMouseEnter={e => {
+              if (!isActive) e.currentTarget.style.background = 'var(--bg-hover)';
+            }}
+            onMouseLeave={e => {
+              if (!isActive) e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <div>
+              <div>{LEVEL_ICONS[level]} {cfg.label}</div>
+              <div style={S.dropdownDesc}>{cfg.description}</div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── 메인 컴포넌트 ──
+export function TopBar(): React.ReactElement {
+  const projectName = useEditorStore(st => st.project.name);
+  const exportProject = useEditorStore(st => st.exportProject);
+  const skillLevel = useEditorStore(st => st.skillLevel);
+  const activeTab = useEditorStore(st => st.activeTab);
+  const setSkillLevel = useEditorStore(st => st.setSkillLevel);
+  const setActiveTab = useEditorStore(st => st.setActiveTab);
   const [showLevelMenu, setShowLevelMenu] = React.useState(false);
-
   const config = SKILL_CONFIGS[skillLevel];
 
-  const handleExport = () => {
+  const handleExport = React.useCallback(() => {
     const json = exportProject();
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -170,94 +241,64 @@ export default function TopBar() {
     a.download = `${projectName}.aistudio.json`;
     a.click();
     URL.revokeObjectURL(url);
-  };
+  }, [exportProject, projectName]);
 
   return (
-    <div style={s.bar}>
-      {/* Logo */}
-      <div style={s.logoSection}>
-        <span style={s.logoText}>AI-STUDIO</span>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 400, opacity: 0.6 }}>v0.33.0327-08</span>
+    <div style={S.bar}>
+      <div style={S.logoSection}>
+        <span style={S.logoText}>AI-STUDIO</span>
+        <span style={S.version}>v0.34.0327-11</span>
       </div>
 
-      <div style={s.divider} />
+      <div style={S.divider} />
 
-      {/* Tabs - filtered by skill level */}
-      <div style={s.tabGroup}>
-        {config.visibleTabs.map((tab) => (
+      <div style={S.tabGroup}>
+        {config.visibleTabs.map(tab => (
           <button
             key={tab}
-            style={s.tab(activeTab === tab)}
+            style={tabStyle(activeTab === tab)}
             onClick={() => setActiveTab(tab)}
-            onMouseEnter={(e) => {
+            onMouseEnter={e => {
               if (activeTab !== tab) e.currentTarget.style.background = 'var(--bg-hover)';
             }}
-            onMouseLeave={(e) => {
+            onMouseLeave={e => {
               if (activeTab !== tab) e.currentTarget.style.background = 'transparent';
             }}
           >
-            {TAB_LABELS[tab]}
+            {TAB_LABELS[tab as EditorTab]}
           </button>
         ))}
       </div>
 
-      <div style={s.divider} />
+      <div style={S.divider} />
+      <span style={S.projectName}>{projectName}</span>
+      <div style={S.spacer} />
+      <span style={badgeStyle('green')}>🔒 Local</span>
+      <div style={S.divider} />
 
-      {/* Project name */}
-      <span style={s.projectName}>{projectName}</span>
-
-      <div style={s.spacer} />
-
-      {/* Privacy badge */}
-      <span style={s.badge('green')}>🔒 Local</span>
-
-      <div style={s.divider} />
-
-      {/* Skill level selector */}
-      <div style={s.levelSelector}>
+      <div style={S.levelSelector as React.CSSProperties}>
         <button
-          style={s.levelBtn}
-          onClick={() => setShowLevelMenu(!showLevelMenu)}
+          style={S.levelBtn}
+          onClick={() => setShowLevelMenu(prev => !prev)}
         >
           <span>{LEVEL_ICONS[skillLevel]}</span>
           <span>{config.label}</span>
           <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>▼</span>
         </button>
-
         {showLevelMenu && (
-          <div style={s.dropdown}>
-            {(Object.keys(SKILL_CONFIGS) as SkillLevel[]).map((level) => {
-              const cfg = SKILL_CONFIGS[level];
-              return (
-                <button
-                  key={level}
-                  style={s.dropdownItem(skillLevel === level)}
-                  onClick={() => {
-                    setSkillLevel(level);
-                    setShowLevelMenu(false);
-                  }}
-                  onMouseEnter={(e) => {
-                    if (skillLevel !== level) e.currentTarget.style.background = 'var(--bg-hover)';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (skillLevel !== level) e.currentTarget.style.background = 'transparent';
-                  }}
-                >
-                  <div>
-                    <div>{LEVEL_ICONS[level]} {cfg.label}</div>
-                    <div style={s.dropdownDesc}>{cfg.description}</div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+          <LevelDropdown
+            current={skillLevel}
+            onSelect={setSkillLevel}
+            onClose={() => setShowLevelMenu(false)}
+          />
         )}
       </div>
 
-      <div style={s.divider} />
-
-      {/* Export */}
-      <button style={s.exportBtn} onClick={handleExport}>Export</button>
+      <div style={S.divider} />
+      <button style={S.exportBtn} onClick={handleExport}>Export</button>
     </div>
   );
 }
+
+// 기존 default import 호환
+export default TopBar;
