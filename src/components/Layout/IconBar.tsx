@@ -22,7 +22,7 @@ export function IconBar(): React.ReactElement {
   const config = SKILL_CONFIGS[skillLevel];
 
   const visiblePanels = PANEL_ICONS.filter(p =>
-    config.visiblePanels.includes(p.id),
+    config.enabledPanels.includes(p.id),
   );
 
   return (
