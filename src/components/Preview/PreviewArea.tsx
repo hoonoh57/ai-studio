@@ -1,222 +1,115 @@
 /* ─── src/components/Preview/PreviewArea.tsx ─── */
-import React, { useRef, useEffect, useCallback, useMemo } from 'react';
-import { useEditorStore } from '@/stores/editorStore';
-import type { Clip, Asset, Track, Transition } from '@/types/project';
+/* Canvas 기반 통합 렌더러 — 검은 프레임 원천 차단 */
 
+import React, { useRef, useEffect, useCallback, useMemo, useState } from 'react';
+import { useEditorStore } from '@/stores/editorStore';
+import { renderFrame, isVideoReady, preloadVideo, transitionTypeToDefinitionId } from '@/engines/canvasRenderer';
+import type { Clip, Asset, Track } from '@/types/project';
+import type { EffectInstance } from '@/types/effect';
+
+/* ─── 상수 ─── */
 const CONTROLS_HEIGHT = 40;
 const MIN_AREA_HEIGHT = 200;
 const CONTROL_BTN_FONT_SIZE = 16;
 const TIMECODE_FONT_SIZE = 12;
+const CANVAS_BG = '#000';
 
+/* ─── 인터페이스 ─── */
 interface ActiveClipData {
   readonly clip: Clip;
   readonly asset: Asset;
   readonly track: Track;
 }
 
-/* ★ NEW: 전환 중인 두 클립 정보 */
-interface TransitionState {
-  readonly transition: Transition;
-  readonly fromClip: ActiveClipData;
-  readonly toClip: ActiveClipData;
-  readonly progress: number; // 0 → 1 (전환 시작 → 끝)
+interface TransitionInfo {
+  clipAId: string;
+  clipBId: string;
+  type: string;
+  duration: number;
+  progress: number;
 }
 
+/* ─── 타임코드 포맷 ─── */
 function formatTimecode(sec: number, fps: number): string {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
   const f = Math.floor((sec % 1) * fps);
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(2, '0')}`;
+  return `${h.toString().padStart(2, '0')}:${m
+    .toString().padStart(2, '0')}:${s
+      .toString().padStart(2, '0')}:${f
+        .toString().padStart(2, '0')}`;
 }
 
+/* ─── 스타일 ─── */
 const styles = {
   area: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    background: '#000',
-    minHeight: MIN_AREA_HEIGHT,
-    position: 'relative',
-  } as React.CSSProperties,
+    flex: 1, display: 'flex', flexDirection: 'column' as const,
+    background: CANVAS_BG, minHeight: MIN_AREA_HEIGHT, position: 'relative' as const,
+  },
+  canvasWrap: {
+    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden', position: 'relative' as const,
+  },
   canvas: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    position: 'relative',
-  } as React.CSSProperties,
-  media: {
-    maxWidth: '100%',
-    maxHeight: '100%',
-    objectFit: 'contain',
-  } as React.CSSProperties,
+    maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' as const,
+    background: CANVAS_BG,
+  },
   controls: {
-    height: CONTROLS_HEIGHT,
-    background: 'var(--bg-secondary)',
-    borderTop: '1px solid var(--border)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-  } as React.CSSProperties,
+    height: CONTROLS_HEIGHT, background: 'var(--bg-secondary)',
+    borderTop: '1px solid var(--border)', display: 'flex',
+    alignItems: 'center', justifyContent: 'center', gap: 12,
+  },
   controlBtn: {
-    background: 'transparent',
-    border: 'none',
-    color: 'var(--text-primary)',
-    fontSize: CONTROL_BTN_FONT_SIZE,
-    cursor: 'pointer',
-    padding: '4px 8px',
-    borderRadius: 4,
-  } as React.CSSProperties,
+    background: 'transparent', border: 'none', color: 'var(--text-primary)',
+    fontSize: CONTROL_BTN_FONT_SIZE, cursor: 'pointer', padding: '4px 8px', borderRadius: 4,
+  },
   timecode: {
-    fontFamily: 'var(--font-mono)',
-    fontSize: TIMECODE_FONT_SIZE,
-    color: 'var(--text-secondary)',
-    minWidth: 80,
-    textAlign: 'center',
-  } as React.CSSProperties,
-  audioPreview: { textAlign: 'center' } as React.CSSProperties,
-  audioIcon: { fontSize: 40 } as React.CSSProperties,
-  /* ★ NEW: 전환 레이어 스타일 */
-  transitionLayer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  } as React.CSSProperties,
-} as const;
-
-/** clip.filters 배열 → CSS filter 문자열 변환 */
-const buildCssFilter = (filters?: any[]): string => {
-  if (!filters || filters.length === 0) return 'none';
-
-  return filters
-    .map(f => {
-      // T-4: params 사용 또는 기본 value 사용
-      const v = f.params ? Object.values(f.params)[0] : (f.value ?? f.defaultValue ?? 0);
-      const num = typeof v === 'number' ? v : 0;
-      switch (f.name.toLowerCase()) {
-        case 'brightness':  return `brightness(${1 + num / 100})`;
-        case 'contrast':    return `contrast(${1 + num / 100})`;
-        case 'saturation':  return `saturate(${1 + num / 100})`;
-        case 'saturate':    return `saturate(${1 + num / 100})`;
-        case 'hue shift':   return `hue-rotate(${num}deg)`;
-        case 'hue-rotate':  return `hue-rotate(${num}deg)`;
-        case 'blur':        return `blur(${num}px)`;
-        case 'grayscale':   return `grayscale(${num / 100})`;
-        case 'sepia':       return `sepia(${num / 100})`;
-        case 'invert':      return `invert(${num / 100})`;
-        case 'noise':       return `opacity(${1 - num / 100})`;
-        case 'vignette':    return `brightness(${1 - num / 200})`;
-        case 'sharpen':     return `contrast(${1 + num / 200})`;
-        default:            return '';
-      }
-    })
-    .filter(Boolean)
-    .join(' ') || 'none';
+    fontFamily: 'var(--font-mono)', fontSize: TIMECODE_FONT_SIZE,
+    color: 'var(--text-secondary)', minWidth: 80, textAlign: 'center' as const,
+  },
+  hiddenVideo: {
+    position: 'absolute' as const, top: -9999, left: -9999,
+    width: 1, height: 1, opacity: 0, pointerEvents: 'none' as const,
+  },
 };
 
-/* ★ NEW: 전환 타입별 CSS 스타일 계산 */
-function getTransitionStyles(
-  type: string,
-  progress: number,
-): { from: React.CSSProperties; to: React.CSSProperties } {
-  switch (type) {
-    case 'dissolve':
-      return {
-        from: { opacity: 1 - progress },
-        to:   { opacity: progress },
-      };
-    case 'fade-black':
-      return {
-        from: { opacity: progress < 0.5 ? 1 - progress * 2 : 0 },
-        to:   { opacity: progress < 0.5 ? 0 : (progress - 0.5) * 2 },
-      };
-    case 'fade-white':
-      return {
-        from: { opacity: progress < 0.5 ? 1 - progress * 2 : 0 },
-        to:   { opacity: progress < 0.5 ? 0 : (progress - 0.5) * 2 },
-      };
-    case 'wipe-left':
-      return {
-        from: { clipPath: `inset(0 ${progress * 100}% 0 0)` },
-        to:   { clipPath: `inset(0 0 0 ${(1 - progress) * 100}%)` },
-      };
-    case 'wipe-right':
-      return {
-        from: { clipPath: `inset(0 0 0 ${progress * 100}%)` },
-        to:   { clipPath: `inset(0 ${(1 - progress) * 100}% 0 0)` },
-      };
-    case 'wipe-up':
-      return {
-        from: { clipPath: `inset(${progress * 100}% 0 0 0)` },
-        to:   { clipPath: `inset(0 0 ${(1 - progress) * 100}% 0)` },
-      };
-    case 'wipe-down':
-      return {
-        from: { clipPath: `inset(0 0 ${progress * 100}% 0)` },
-        to:   { clipPath: `inset(${(1 - progress) * 100}% 0 0 0)` },
-      };
-    case 'slide-left':
-      return {
-        from: { transform: `translateX(${-progress * 100}%)` },
-        to:   { transform: `translateX(${(1 - progress) * 100}%)` },
-      };
-    case 'slide-right':
-      return {
-        from: { transform: `translateX(${progress * 100}%)` },
-        to:   { transform: `translateX(${-(1 - progress) * 100}%)` },
-      };
-    case 'zoom-in':
-      return {
-        from: { opacity: 1 - progress, transform: `scale(${1 + progress * 0.5})` },
-        to:   { opacity: progress, transform: `scale(${0.5 + progress * 0.5})` },
-      };
-    case 'zoom-out':
-      return {
-        from: { opacity: 1 - progress, transform: `scale(${1 - progress * 0.3})` },
-        to:   { opacity: progress, transform: `scale(${1.3 - progress * 0.3})` },
-      };
-    case 'blur':
-      return {
-        from: { opacity: 1 - progress, filter: `blur(${progress * 20}px)` },
-        to:   { opacity: progress, filter: `blur(${(1 - progress) * 20}px)` },
-      };
-    default: // fallback: dissolve
-      return {
-        from: { opacity: 1 - progress },
-        to:   { opacity: progress },
-      };
-  }
-}
-
+/* ════════════════════════════════════════
+   컴포넌트
+   ════════════════════════════════════════ */
 export function PreviewArea(): React.ReactElement {
-  const currentTime = useEditorStore((s) => s.currentTime);
-  const isPlaying = useEditorStore((s) => s.isPlaying);
-  const project = useEditorStore((s) => s.project);
-  const togglePlay = useEditorStore((s) => s.togglePlay);
-  const setCurrentTime = useEditorStore((s) => s.setCurrentTime);
-  const transitions = useEditorStore((s) => s.transitions); // ★ FIX: store 최상위에서 읽기
+  /* ── Store 구독 ── */
+  const currentTime = useEditorStore(s => s.currentTime);
+  const isPlaying = useEditorStore(s => s.isPlaying);
+  const project = useEditorStore(s => s.project);
+  const togglePlay = useEditorStore(s => s.togglePlay);
+  const setCurrentTime = useEditorStore(s => s.setCurrentTime);
+  const transitions = useEditorStore(s => s.transitions);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const videoRefB = useRef<HTMLVideoElement>(null); /* ★ NEW: 전환용 두 번째 비디오 */
+  /* ── Refs ── */
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const videoARef = useRef<HTMLVideoElement>(null);   // 항상 DOM에 존재
+  const videoBRef = useRef<HTMLVideoElement>(null);   // 항상 DOM에 존재
   const lastTimeRef = useRef<number>(0);
+  const currentSrcA = useRef<string>('');
+  const currentSrcB = useRef<string>('');
 
-  // Active clip: find top-most visible track with a clip at currentTime
+  /* ── Canvas 2D context 초기화 ── */
+  useEffect(() => {
+    if (canvasRef.current && !ctxRef.current) {
+      ctxRef.current = canvasRef.current.getContext('2d', { willReadFrequently: true });
+    }
+  }, []);
+
+  /* ── 현재 시간의 활성 클립 찾기 ── */
   const activeClip: ActiveClipData | null = useMemo(() => {
-    const sortedTracks = [...project.tracks].sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
-    for (const track of sortedTracks) {
+    const sorted = [...project.tracks].sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
+    for (const track of sorted) {
       if (!track.visible) continue;
       for (const clip of track.clips) {
         if (currentTime >= clip.startTime && currentTime < clip.startTime + clip.duration) {
-          const asset = project.assets.find((a) => a.id === clip.assetId);
+          const asset = project.assets.find(a => a.id === clip.assetId);
           if (asset) return { clip, asset, track };
         }
       }
@@ -224,49 +117,140 @@ export function PreviewArea(): React.ReactElement {
     return null;
   }, [project.tracks, project.assets, currentTime]);
 
-  /* ★ NEW: 현재 시간에 활성화된 전환 효과 감지 */
-  const activeTransition: TransitionState | null = useMemo(() => {
-    if (!transitions || transitions.length === 0) return null; // ★ FIX: store의 transitions 사용
+  /* ── 현재 시간의 활성 전환 찾기 ── */
+  const activeTransition: (TransitionInfo & { fromClip: ActiveClipData; toClip: ActiveClipData }) | null =
+    useMemo(() => {
+      if (!transitions || transitions.length === 0) return null;
+
+      for (const tr of transitions) {
+        let fromClip: ActiveClipData | null = null;
+        let toClip: ActiveClipData | null = null;
+
+        for (const track of project.tracks) {
+          for (const clip of track.clips) {
+            if (clip.id === tr.clipAId) {
+              const asset = project.assets.find(a => a.id === clip.assetId);
+              if (asset) fromClip = { clip, asset, track };
+            }
+            if (clip.id === tr.clipBId) {
+              const asset = project.assets.find(a => a.id === clip.assetId);
+              if (asset) toClip = { clip, asset, track };
+            }
+          }
+        }
+        if (!fromClip || !toClip) continue;
+
+        const clipAEnd = fromClip.clip.startTime + fromClip.clip.duration;
+        const tStart = clipAEnd - tr.duration;
+        const tEnd = clipAEnd;
+
+        if (currentTime >= tStart && currentTime < tEnd) {
+          const progress = (currentTime - tStart) / tr.duration;
+          return {
+            clipAId: tr.clipAId,
+            clipBId: tr.clipBId,
+            type: tr.type,
+            duration: tr.duration,
+            progress: Math.max(0, Math.min(1, progress)),
+            fromClip,
+            toClip,
+          };
+        }
+      }
+      return null;
+    }, [project.tracks, project.assets, transitions, currentTime]);
+
+  /* ── Video A: src 및 seek 동기화 ── */
+  useEffect(() => {
+    const video = videoARef.current;
+    if (!video) return;
+
+    const data = activeTransition ? activeTransition.fromClip : activeClip;
+    if (!data) return;
+    if (data.asset.type !== 'video') return;
+
+    // src 변경
+    const newSrc = data.asset.src;
+    if (currentSrcA.current !== newSrc) {
+      video.src = newSrc;
+      video.load();
+      currentSrcA.current = newSrc;
+    }
+
+    // seek
+    const relTime = currentTime - data.clip.startTime;
+    const seekTime = data.clip.inPoint + relTime;
+    video.playbackRate = data.clip.speed;
+    if (Math.abs(video.currentTime - seekTime) > 0.05) {
+      video.currentTime = seekTime;
+    }
+    video.muted = data.track.muted;
+    if (isPlaying && video.paused) video.play().catch(() => { });
+    if (!isPlaying && !video.paused) video.pause();
+  }, [currentTime, isPlaying, activeClip, activeTransition]);
+
+  /* ── Video B: 전환용 src 및 seek 동기화 ── */
+  useEffect(() => {
+    const video = videoBRef.current;
+    if (!video || !activeTransition) return;
+
+    const data = activeTransition.toClip;
+    if (data.asset.type !== 'video') return;
+
+    const newSrc = data.asset.src;
+    if (currentSrcB.current !== newSrc) {
+      video.src = newSrc;
+      video.load();
+      currentSrcB.current = newSrc;
+    }
+
+    const relTime = currentTime - data.clip.startTime;
+    const seekTime = data.clip.inPoint + relTime;
+    video.playbackRate = data.clip.speed;
+    if (Math.abs(video.currentTime - seekTime) > 0.05) {
+      video.currentTime = seekTime;
+    }
+    video.muted = data.track.muted;
+    if (isPlaying && video.paused) video.play().catch(() => { });
+    if (!isPlaying && !video.paused) video.pause();
+  }, [currentTime, isPlaying, activeTransition]);
+
+  /* ── Video B 프리로드: 전환 시작 0.5초 전 ── */
+  useEffect(() => {
+    if (!transitions || transitions.length === 0) return;
+    const video = videoBRef.current;
+    if (!video) return;
 
     for (const tr of transitions) {
-      // clipA(from)와 clipB(to) 찾기
-      let fromClip: ActiveClipData | null = null;
-      let toClip: ActiveClipData | null = null;
+      let fromClip: Clip | null = null;
+      let toClip: Clip | null = null;
+      let toAsset: Asset | null = null;
 
       for (const track of project.tracks) {
         for (const clip of track.clips) {
-          if (clip.id === tr.clipAId) {
-            const asset = project.assets.find(a => a.id === clip.assetId);
-            if (asset) fromClip = { clip, asset, track };
-          }
+          if (clip.id === tr.clipAId) fromClip = clip;
           if (clip.id === tr.clipBId) {
-            const asset = project.assets.find(a => a.id === clip.assetId);
-            if (asset) toClip = { clip, asset, track };
+            toClip = clip;
+            toAsset = project.assets.find(a => a.id === clip.assetId) ?? null;
           }
         }
       }
+      if (!fromClip || !toClip || !toAsset) continue;
+      if (toAsset.type !== 'video') continue;
 
-      if (!fromClip || !toClip) continue;
+      const clipAEnd = fromClip.startTime + fromClip.duration;
+      const preloadTime = clipAEnd - tr.duration - 0.5;
 
-      // 전환 구간: clipA 끝 - duration ~ clipA 끝
-      const clipAEnd = fromClip.clip.startTime + fromClip.clip.duration;
-      const transitionStart = clipAEnd - tr.duration;
-      const transitionEnd = clipAEnd;
-
-      if (currentTime >= transitionStart && currentTime < transitionEnd) {
-        const progress = (currentTime - transitionStart) / tr.duration;
-        return {
-          transition: tr,
-          fromClip,
-          toClip,
-          progress: Math.max(0, Math.min(1, progress)),
-        };
+      if (currentTime >= preloadTime && currentTime < clipAEnd - tr.duration) {
+        if (currentSrcB.current !== toAsset.src) {
+          preloadVideo(video, toAsset.src, toClip.inPoint);
+          currentSrcB.current = toAsset.src;
+        }
       }
     }
-    return null;
-  }, [project.tracks, project.assets, transitions, currentTime]); // ★ FIX
+  }, [currentTime, transitions, project.tracks, project.assets]);
 
-  // Playback Loop
+  /* ── 재생 루프 ── */
   useEffect(() => {
     if (!isPlaying) return;
     lastTimeRef.current = performance.now();
@@ -275,13 +259,15 @@ export function PreviewArea(): React.ReactElement {
     const tick = (now: number) => {
       const dt = (now - lastTimeRef.current) / 1000;
       lastTimeRef.current = now;
-
       const state = useEditorStore.getState();
+
       let speed = 1;
       const sorted = [...state.project.tracks].sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
       for (const t of sorted) {
         if (!t.visible) continue;
-        const c = t.clips.find(cl => state.currentTime >= cl.startTime && state.currentTime < cl.startTime + cl.duration);
+        const c = t.clips.find(
+          cl => state.currentTime >= cl.startTime && state.currentTime < cl.startTime + cl.duration,
+        );
         if (c) { speed = c.speed; break; }
       }
 
@@ -294,146 +280,95 @@ export function PreviewArea(): React.ReactElement {
       state.setCurrentTime(next);
       frameId = requestAnimationFrame(tick);
     };
+
     frameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frameId);
   }, [isPlaying]);
 
-  // Sync Video Element A (main)
+  /* ── Canvas 렌더 루프 ── */
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !activeClip) return;
-    if (activeClip.asset.type !== 'video' && activeClip.asset.type !== 'audio') return;
+    const canvas = canvasRef.current;
+    const ctx = ctxRef.current;
+    if (!canvas || !ctx) return;
 
-    const relTime = currentTime - activeClip.clip.startTime;
-    const seekTime = activeClip.clip.inPoint + relTime;
+    const w = project.resolution?.width ?? 1920;
+    const h = project.resolution?.height ?? 1080;
 
-    video.playbackRate = activeClip.clip.speed;
-    if (Math.abs(video.currentTime - seekTime) > 0.05) {
-      video.currentTime = seekTime;
+    // 이미지 소스 결정
+    let imageA: HTMLImageElement | null = null;
+    const clipData = activeTransition ? activeTransition.fromClip : activeClip;
+    if (clipData && clipData.asset.type === 'image') {
+      const img = new Image();
+      img.src = clipData.asset.src;
+      if (img.complete) imageA = img;
     }
-    if (isPlaying && video.paused) video.play().catch(() => {});
-    if (!isPlaying && !video.paused) video.pause();
-  }, [currentTime, isPlaying, activeClip]);
 
-  /* ★ NEW: Sync Video Element B (전환용) */
-  useEffect(() => {
-    const video = videoRefB.current;
-    if (!video || !activeTransition) return;
+    // 전환 정보
+    const transitionParam = activeTransition
+      ? {
+        definitionId: transitionTypeToDefinitionId(activeTransition.type),
+        progress: activeTransition.progress,
+      }
+      : null;
 
-    const toClip = activeTransition.toClip;
-    if (toClip.asset.type !== 'video' && toClip.asset.type !== 'audio') return;
+    // TODO: E-3에서 EffectInstance CRUD 구현 후 여기서 활성 효과를 가져옴
+    const activeEffects: EffectInstance[] = [];
 
-    const relTime = currentTime - toClip.clip.startTime;
-    const seekTime = toClip.clip.inPoint + relTime;
+    renderFrame({
+      canvas, ctx,
+      width: w, height: h,
+      fps: project.fps,
+      currentTime,
+      videoA: videoARef.current,
+      videoB: videoBRef.current,
+      imageA,
+      activeEffects,
+      transition: transitionParam,
+    });
+  }, [currentTime, activeClip, activeTransition, project.fps, project.resolution]);
 
-    video.playbackRate = toClip.clip.speed;
-    if (Math.abs(video.currentTime - seekTime) > 0.05) {
-      video.currentTime = seekTime;
-    }
-    video.muted = toClip.track.muted;
-    if (isPlaying && video.paused) video.play().catch(() => {});
-    if (!isPlaying && !video.paused) video.pause();
-  }, [currentTime, isPlaying, activeTransition]);
+  /* ── 프레임 스텝 ── */
+  const stepFrame = useCallback(
+    (dir: number) => setCurrentTime(currentTime + dir / project.fps),
+    [currentTime, project.fps, setCurrentTime],
+  );
 
-  const stepFrame = useCallback((dir: number) => {
-    setCurrentTime(currentTime + dir / project.fps);
-  }, [currentTime, project.fps, setCurrentTime]);
-
-  const buildClipStyle = (data: ActiveClipData): React.CSSProperties => ({
-    opacity: data.clip.opacity,
-    transform: `translate(${data.clip.transform.x}px, ${data.clip.transform.y}px) scale(${data.clip.transform.scale}) rotate(${data.clip.transform.rotation}deg)`,
-    mixBlendMode: data.clip.blendMode as any,
-    filter: buildCssFilter(data.clip.filters),
-  });
-
-  /* ★ NEW: 단일 클립 렌더러 (재사용) */
-  const renderMedia = (
-    data: ActiveClipData,
-    ref: React.RefObject<HTMLVideoElement | null>,
-    extraStyle: React.CSSProperties = {},
-  ) => {
-    const clipStyle = { ...buildClipStyle(data), ...extraStyle };
-
-    if (data.asset.type === 'video') {
-      return (
-        <video
-          ref={ref}
-          src={data.asset.src}
-          style={{ ...styles.media, ...clipStyle }}
-          muted={data.track.muted}
-        />
-      );
-    }
-    if (data.asset.type === 'audio') {
-      return (
-        <div style={styles.audioPreview}>
-          <div style={styles.audioIcon}>🎵</div>
-          <div style={{ fontSize: 13, color: '#aaa', marginTop: 10 }}>{data.asset.name}</div>
-          <video ref={ref} src={data.asset.src} style={{ display: 'none' }} muted={data.track.muted} />
-        </div>
-      );
-    }
-    return <img src={data.asset.src} style={{ ...styles.media, ...clipStyle }} alt="" />;
-  };
-
-  /* ★ NEW: fade-white 배경 */
-  const fadeWhiteBg = activeTransition?.transition.type === 'fade-white'
-    ? activeTransition.progress < 0.5
-      ? activeTransition.progress * 2
-      : (1 - activeTransition.progress) * 2
-    : 0;
-
+  /* ── 렌더 ── */
   return (
     <div style={styles.area}>
-      <div style={styles.canvas}>
-        {/* ★ NEW: 전환 모드 렌더링 */}
-        {activeTransition ? (
-          <>
-            {/* fade-white 배경 */}
-            {activeTransition.transition.type === 'fade-white' && (
-              <div style={{
-                ...styles.transitionLayer,
-                background: `rgba(255,255,255,${fadeWhiteBg})`,
-                zIndex: 5,
-                pointerEvents: 'none',
-              }} />
-            )}
-            {/* fade-black 배경 */}
-            {activeTransition.transition.type === 'fade-black' && (
-              <div style={{
-                ...styles.transitionLayer,
-                background: '#000',
-                zIndex: 0,
-              }} />
-            )}
-            {/* From 클립 (나가는 클립) */}
-            <div style={{
-              ...styles.transitionLayer,
-              zIndex: 1,
-              ...getTransitionStyles(activeTransition.transition.type, activeTransition.progress).from,
-            }}>
-              {renderMedia(activeTransition.fromClip, videoRef)}
-            </div>
-            {/* To 클립 (들어오는 클립) */}
-            <div style={{
-              ...styles.transitionLayer,
-              zIndex: 2,
-              ...getTransitionStyles(activeTransition.transition.type, activeTransition.progress).to,
-            }}>
-              {renderMedia(activeTransition.toClip, videoRefB)}
-            </div>
-          </>
-        ) : activeClip ? (
-          renderMedia(activeClip, videoRef)
-        ) : (
-          <span style={{ color: '#555', fontSize: 13 }}>No clip at current time</span>
-        )}
+      {/* 항상 DOM에 존재하는 hidden video 요소들 — 마운트/언마운트 없음 */}
+      <video
+        ref={videoARef}
+        style={styles.hiddenVideo}
+        playsInline
+        preload="auto"
+        crossOrigin="anonymous"
+      />
+      <video
+        ref={videoBRef}
+        style={styles.hiddenVideo}
+        playsInline
+        preload="auto"
+        crossOrigin="anonymous"
+      />
+
+      {/* Canvas — 모든 렌더링은 여기서 발생 */}
+      <div style={styles.canvasWrap}>
+        <canvas
+          ref={canvasRef}
+          style={styles.canvas}
+          width={project.resolution?.width ?? 1920}
+          height={project.resolution?.height ?? 1080}
+        />
       </div>
 
+      {/* 컨트롤 */}
       <div style={styles.controls}>
         <button style={styles.controlBtn} onClick={() => setCurrentTime(0)}>⏮</button>
         <button style={styles.controlBtn} onClick={() => stepFrame(-1)}>⏪</button>
-        <button style={styles.controlBtn} onClick={togglePlay}>{isPlaying ? '⏸' : '▶'}</button>
+        <button style={styles.controlBtn} onClick={togglePlay}>
+          {isPlaying ? '⏸' : '▶'}
+        </button>
         <button style={styles.controlBtn} onClick={() => stepFrame(1)}>⏩</button>
         <span style={styles.timecode}>{formatTimecode(currentTime, project.fps)}</span>
       </div>
