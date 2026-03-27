@@ -1,14 +1,13 @@
+// src/types/project.ts
+
+// === Core Types ===
+
 export interface Transform {
   x: number;
   y: number;
   scaleX: number;
   scaleY: number;
   rotation: number;
-}
-
-export interface TimeRange {
-  start: number;
-  end: number;
 }
 
 export type TrackType = 'video' | 'audio' | 'text' | 'effect';
@@ -69,9 +68,13 @@ export interface Project {
   duration: number;
   tracks: Track[];
   assets: Asset[];
+  markers?: readonly Marker[];
+  transitions?: readonly Transition[];
+  inOut?: InOutRange;
 }
 
 // === Skill Level System ===
+
 export type SkillLevel = 'beginner' | 'intermediate' | 'advanced' | 'expert';
 
 export type EditorTab = 'ai-creator' | 'edit' | 'color' | 'audio' | 'ai-workflow' | 'export';
@@ -180,11 +183,13 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     showNodeColor: true,
     showFFmpegCustom: true,
   },
-};
+} as const satisfies Record<SkillLevel, SkillConfig>;
 
-// === Timeline Engine Types (A-1 Extension) ===
+// === Timeline Engine Types ===
 
 export type TrimMode = 'normal' | 'ripple' | 'roll' | 'slip' | 'slide';
+
+export type DragType = 'move' | 'trim-left' | 'trim-right';
 
 export interface Marker {
   readonly id: string;
@@ -200,8 +205,8 @@ export interface InOutRange {
 
 export interface Transition {
   readonly id: string;
-  readonly type: string;           // 'cross-dissolve' | 'dip-to-black' | 'wipe-left' ...
-  readonly duration: number;       // seconds
+  readonly type: string;
+  readonly duration: number;
   readonly clipAId: string;
   readonly clipBId: string;
 }
@@ -213,7 +218,7 @@ export interface SnapPoint {
 }
 
 export interface TimelineDragState {
-  readonly type: 'move' | 'trim-left' | 'trim-right';
+  readonly type: DragType;
   readonly clipId: string;
   readonly startX: number;
   readonly origStart: number;
@@ -224,21 +229,13 @@ export interface TimelineDragState {
 
 export interface WaveformData {
   readonly assetId: string;
-  readonly peaks: readonly number[];   // normalized 0-1
+  readonly peaks: readonly number[];
   readonly sampleRate: number;
   readonly duration: number;
 }
 
 export interface ThumbnailData {
   readonly assetId: string;
-  readonly frames: readonly string[];  // data URL or blob URL per interval
-  readonly interval: number;           // seconds per frame
-}
-
-// Project 확장 (기존 필드 유지, 새 필드는 optional)
-// 방법: 별도 확장 인터페이스 사용
-export interface ProjectExtension {
-  readonly markers?: readonly Marker[];
-  readonly transitions?: readonly Transition[];
-  readonly inOut?: InOutRange;
+  readonly frames: readonly string[];
+  readonly interval: number;
 }

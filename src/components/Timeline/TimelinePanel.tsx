@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useRef, useEffect, useCallback, memo } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import TimelineToolbar from './TimelineToolbar';
 import TrackHeader from './TrackHeader';
@@ -6,25 +6,28 @@ import TrackRow from './TrackRow';
 import TimelineRuler from './TimelineRuler';
 import Playhead from './Playhead';
 import MarkerTrack from './MarkerTrack';
+import { snapTime } from '@/lib/core/snapEngine';
 
 const PIXELS_PER_SECOND_BASE = 50;
 
 export default function TimelinePanel() {
   const project = useEditorStore((s) => s.project);
   const zoom = useEditorStore((s) => s.zoom);
+  const currentTime = useEditorStore((s) => s.currentTime);
+  const inOut = useEditorStore((s) => s.inOut);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const snapEnabled = useEditorStore((s) => s.snapEnabled);
   const markers = useEditorStore((s) => s.markers);
 
   const {
-    setCurrentTime, setZoom, addMarker, togglePlay, removeClip, splitClip, selectClip, addClip, updateClip,
+    setCurrentTime, selectClip, addClip, updateClip, splitClip, togglePlay,
   } = useEditorStore();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pps = PIXELS_PER_SECOND_BASE * zoom;
   const totalWidth = project.duration * pps;
 
-  // AUTO-SCROLL handler
+  // AUTO-SCROLL
   useEffect(() => {
     const unsub = useEditorStore.subscribe(
       (s) => s.currentTime,
@@ -41,24 +44,7 @@ export default function TimelinePanel() {
     return unsub;
   }, [pps]);
 
-  const snapPoints = useMemo(() => {
-    if (!snapEnabled) return [];
-    const points = new Set([0, project.duration]);
-    markers.forEach(m => points.add(m.time));
-    project.tracks.forEach(t => t.clips.forEach(c => { points.add(c.timelineStart); points.add(c.timelineEnd); }));
-    return Array.from(points);
-  }, [snapEnabled, project.duration, project.tracks, markers]);
-
-  const snapValue = (val: number, threshold: number = 0.2) => {
-    if (!snapEnabled) return val;
-    let closest = val;
-    let minDiff = threshold;
-    snapPoints.forEach(p => { const diff = Math.abs(val - p); if (diff < minDiff) { minDiff = diff; closest = p; } });
-    return closest;
-  };
-
   const dragRef = useRef<any>(null);
-  
   const startDrag = useCallback((e: React.MouseEvent, type: any, clipId: string, origStart: number, origEnd: number) => {
     e.preventDefault();
     e.stopPropagation();
@@ -71,15 +57,17 @@ export default function TimelinePanel() {
       const dt = (ev.clientX - d.startX) / pps;
       const dur = d.origEnd - d.origStart;
       
+      const st = (time: number) => snapTime(time, project.tracks, markers, inOut, currentTime, project.duration, snapEnabled, zoom);
+
       if (d.type === 'move') {
-        const s = snapValue(d.origStart + dt);
+        const s = st(d.origStart + dt);
         updateClip(d.clipId, { timelineStart: s, timelineEnd: s + dur });
       } else if (d.type === 'trim-left') {
-        const s = snapValue(Math.max(0, d.origStart + dt));
+        const s = st(Math.max(0, d.origStart + dt));
         if (s < d.origEnd - 0.1) updateClip(d.clipId, { timelineStart: s });
       } else if (d.type === 'trim-right') {
-        const e = snapValue(d.origEnd + dt);
-        if (e > d.origStart + 0.1) updateClip(d.clipId, { timelineEnd: e });
+        const eEnd = st(d.origEnd + dt);
+        if (eEnd > d.origStart + 0.1) updateClip(d.clipId, { timelineEnd: eEnd });
       }
     };
     
@@ -88,31 +76,29 @@ export default function TimelinePanel() {
       window.removeEventListener('mousemove', onMove); 
       window.removeEventListener('mouseup', onUp); 
     };
-    
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [pps, selectClip, updateClip, snapEnabled, snapPoints]);
+  }, [pps, selectClip, updateClip, snapEnabled, project.tracks, project.duration, markers, inOut, currentTime, zoom]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as any)?.tagName)) return;
-      
-      const { currentTime, project: proj, setCurrentTime: setTime, splitClip: sClip, togglePlay: tPlay, selectedClipId: selId, addMarker: aMarker } = useEditorStore.getState();
+      const { currentTime: ct, project: proj, setCurrentTime: setTime, splitClip: sClip, togglePlay: tPlay, selectedClipId: selId, addMarker: aMarker } = useEditorStore.getState();
       const step = 1 / (proj.fps || 30);
 
       if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'PageDown' || e.key === 'PageUp' || e.key === 'Home' || e.key === 'End' || e.key === ' ') {
         e.preventDefault(); e.stopImmediatePropagation();
-        if (e.key === 'ArrowRight') setTime(currentTime + (e.shiftKey ? 1 : step));
-        else if (e.key === 'ArrowLeft') setTime(currentTime - (e.shiftKey ? 1 : step));
-        else if (e.key === 'PageDown') setTime(currentTime + 5);
-        else if (e.key === 'PageUp') setTime(currentTime - 5);
+        if (e.key === 'ArrowRight') setTime(ct + (e.shiftKey ? 1 : step));
+        else if (e.key === 'ArrowLeft') setTime(ct - (e.shiftKey ? 1 : step));
+        else if (e.key === 'PageDown') setTime(ct + 5);
+        else if (e.key === 'PageUp') setTime(ct - 5);
         else if (e.key === 'Home') setTime(0);
         else if (e.key === 'End') setTime(proj.duration);
         else if (e.key === ' ') tPlay();
       } else if (e.key === 'c' || e.key === 'C') {
-        if (selId) sClip(selId, currentTime);
+        if (selId) sClip(selId, ct);
       } else if (e.key === 'm' || e.key === 'M') {
-        aMarker(currentTime);
+        aMarker(ct);
       }
     };
     document.addEventListener('keydown', handleKey, { capture: true });
@@ -145,16 +131,7 @@ export default function TimelinePanel() {
           {project.tracks.map(t => <TrackHeader key={t.id} track={t} />)}
         </div>
 
-        <div 
-          style={{ flex: 1, overflowX: 'auto', overflowY: 'hidden', position: 'relative' }} 
-          ref={scrollRef} 
-          tabIndex={-1} 
-          onMouseDown={(e) => { 
-            // Only trigger jump if clicked on the ruler area (top 28px)
-            const top = e.currentTarget.getBoundingClientRect().top;
-            if (e.clientY < top + 28) handleRulerClick(e); 
-          }}
-        >
+        <div style={{ flex: 1, overflowX: 'auto', overflowY: 'hidden', position: 'relative' }} ref={scrollRef} tabIndex={-1} onMouseDown={(e) => { const top = e.currentTarget.getBoundingClientRect().top; if (e.clientY < top + 28) handleRulerClick(e); }}>
           <div style={{ position: 'sticky', top: 0, zIndex: 50, background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)' }}>
             <TimelineRuler pps={pps} duration={project.duration} zoom={zoom} />
           </div>
@@ -174,7 +151,6 @@ export default function TimelinePanel() {
             ))}
           </div>
 
-          {/* Overlays: pointer-events: none ensures clicks PASS THROUGH to tracks below */}
           <div style={{ position: 'absolute', top: 0, left: 0, width: totalWidth, height: '100%', pointerEvents: 'none', zIndex: 200 }}>
             <MarkerTrack markers={markers} pps={pps} totalWidth={totalWidth} />
             <Playhead pps={pps} />

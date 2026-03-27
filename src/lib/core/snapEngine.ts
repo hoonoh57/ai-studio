@@ -1,73 +1,120 @@
-import type { Project } from '@/types/project';
-import type { Marker, InOutRange, Transition, SnapPoint, WaveformData, ThumbnailData } from '@/types/project';
+// src/lib/core/snapEngine.ts
 
-// === Timeline Engine Snap Utilities ===
+import type { Track, Marker, InOutRange, SnapPoint } from '@/types/project';
 
+const SNAP_SOURCES = {
+  clipStart: 'clip-start',
+  clipEnd: 'clip-end',
+  playhead: 'playhead',
+  marker: 'marker',
+  inOut: 'in-out',
+} as const;
+
+/**
+ * 프로젝트의 모든 스냅 포인트를 수집합니다.
+ * 클립 시작/끝, 재생헤드, 마커, In/Out 포인트를 포함합니다.
+ */
 export function collectSnapPoints(
-  project: Project,
-  markers: readonly Marker[],
-  inOut: InOutRange,
-  playheadTime: number
-): SnapPoint[] {
-  const points: SnapPoint[] = [];
-
-  for (const track of project.tracks) {
-    for (const clip of track.clips) {
-      points.push({ time: clip.timelineStart, source: 'clip-start', trackId: track.id });
-      points.push({ time: clip.timelineEnd, source: 'clip-end', trackId: track.id });
-    }
-  }
-
-  points.push({ time: playheadTime, source: 'playhead' });
-
-  for (const marker of markers) {
-    points.push({ time: marker.time, source: 'marker', trackId: undefined });
-  }
-
-  if (typeof inOut?.inPoint === 'number') {
-    points.push({ time: inOut.inPoint, source: 'in-out' });
-  }
-
-  if (typeof inOut?.outPoint === 'number') {
-    points.push({ time: inOut.outPoint, source: 'in-out' });
-  }
-
-  return points.sort((a, b) => a.time - b.time);
-}
-
-export function findNearestSnap(
-  time: number,
-  snapPoints: readonly SnapPoint[],
-  threshold = 0.1
-): { snapped: number; point: SnapPoint } | null {
-  let nearest: { snapped: number; point: SnapPoint } | null = null;
-
-  for (const point of snapPoints) {
-    const delta = Math.abs(time - point.time);
-    if (delta > threshold) continue;
-
-    if (nearest === null || delta < Math.abs(time - nearest.snapped)) {
-      nearest = { snapped: point.time, point };
-    }
-  }
-
-  return nearest;
-}
-
-export function snapTime(
-  time: number,
-  project: Project,
+  tracks: readonly Track[],
   markers: readonly Marker[],
   inOut: InOutRange,
   playheadTime: number,
+  projectDuration: number,
+): readonly SnapPoint[] {
+  const points: SnapPoint[] = [];
+  const seen = new Set<number>();
+
+  const add = (time: number, source: SnapPoint['source'], trackId?: string) => {
+    const rounded = Math.round(time * 1000) / 1000;
+    // For set-based deduplication, we check rounding. 
+    // But since SnapPoint has other fields, we use a simple set of numbers for basic time points.
+    if (seen.has(rounded) && source !== 'clip-start' && source !== 'clip-end') return;
+    seen.add(rounded);
+    points.push({ time: rounded, source, trackId });
+  };
+
+  add(0, SNAP_SOURCES.clipStart);
+  add(projectDuration, SNAP_SOURCES.clipEnd);
+
+  for (const track of tracks) {
+    for (const clip of track.clips) {
+      add(clip.timelineStart, SNAP_SOURCES.clipStart, track.id);
+      add(clip.timelineEnd, SNAP_SOURCES.clipEnd, track.id);
+    }
+  }
+
+  add(playheadTime, SNAP_SOURCES.playhead);
+
+  for (const marker of markers) {
+    add(marker.time, SNAP_SOURCES.marker);
+  }
+
+  if (inOut.inPoint !== null) {
+    add(inOut.inPoint, SNAP_SOURCES.inOut);
+  }
+  if (inOut.outPoint !== null) {
+    add(inOut.outPoint, SNAP_SOURCES.inOut);
+  }
+
+  return points;
+}
+
+/**
+ * 주어진 시간에서 가장 가까운 스냅 포인트를 찾습니다.
+ * threshold(초) 이내에 없으면 null을 반환합니다.
+ */
+export function findNearestSnap(
+  time: number,
+  snapPoints: readonly SnapPoint[],
+  threshold: number,
+): { snapped: number; point: SnapPoint } | null {
+  let closest: SnapPoint | null = null;
+  let minDiff = threshold;
+
+  for (const point of snapPoints) {
+    const diff = Math.abs(time - point.time);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = point;
+    }
+  }
+
+  if (closest === null) return null;
+
+  return { snapped: closest.time, point: closest };
+}
+
+/**
+ * 스냅이 활성화되어 있으면 가장 가까운 스냅 포인트로 보정된 시간을 반환합니다.
+ * 비활성화 시 원본 시간을 그대로 반환합니다.
+ *
+ * threshold는 zoom 레벨에 반비례하여 자동 조정됩니다.
+ * zoom이 높으면(확대) threshold가 작아지고, 낮으면(축소) 커집니다.
+ */
+export function snapTime(
+  time: number,
+  tracks: readonly Track[],
+  markers: readonly Marker[],
+  inOut: InOutRange,
+  playheadTime: number,
+  projectDuration: number,
   snapEnabled: boolean,
-  zoom: number
+  zoom: number,
 ): number {
   if (!snapEnabled) return time;
 
-  const snapPoints = collectSnapPoints(project, markers, inOut, playheadTime);
-  const adjustedThreshold = Math.max(0.001, 0.1 / Math.max(0.1, zoom));
-  const nearest = findNearestSnap(time, snapPoints, adjustedThreshold);
+  const baseThreshold = 0.2;
+  const threshold = baseThreshold / Math.max(0.1, zoom);
 
-  return nearest ? nearest.snapped : time;
+  const points = collectSnapPoints(
+    tracks,
+    markers,
+    inOut,
+    playheadTime,
+    projectDuration,
+  );
+
+  const result = findNearestSnap(time, points, threshold);
+
+  return result !== null ? result.snapped : time;
 }
