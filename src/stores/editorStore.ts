@@ -6,6 +6,7 @@ import {
   EditorTab, PanelId, WaveformData, ThumbnailData,
   DEFAULT_TRACK_COLORS, TRACK_HEIGHT_PRESETS, TrackHeightPreset,
   assetTypeToTrackType, TrimMode, BlendMode,
+  KeyframeProperty, EasingType, Keyframe, KeyframeTrack,
 } from '@/types/project';
 import { createMediaSlice, MEDIA_INITIAL_STATE, MediaSlice } from './mediaSlice';
 
@@ -95,6 +96,12 @@ export interface EditorState {
   groupClips: (clipIds: string[]) => void;
   ungroupClips: (groupId: string) => void;
   getClipsInGroup: (groupId: string) => Clip[];
+
+  /* Step 3: 키프레임 */
+  addKeyframe: (clipId: string, property: KeyframeProperty, time: number, value: number, easing?: EasingType) => void;
+  removeKeyframe: (clipId: string, property: KeyframeProperty, keyframeId: string) => void;
+  updateKeyframe: (clipId: string, property: KeyframeProperty, keyframeId: string, patch: Partial<Keyframe>) => void;
+  getKeyframeValue: (clipId: string, property: KeyframeProperty, time: number) => number | null;
 
   /* 재생/선택 */
   currentTime: number;
@@ -590,6 +597,107 @@ export const useEditorStore = create<StoreType>((set, get) => ({
       }
     }
     return clips;
+  },
+
+  /* ── Step 3: 키프레임 ── */
+  addKeyframe: (clipId, property, time, value, easing = 'linear') => {
+    set((s) => ({
+      project: {
+        ...s.project,
+        tracks: s.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c => {
+            if (c.id !== clipId) return c;
+            const tracks = c.keyframeTracks ? [...c.keyframeTracks] : [];
+            let kfTrack = tracks.find(kt => kt.property === property);
+            if (!kfTrack) {
+              kfTrack = { property, keyframes: [], enabled: true };
+              tracks.push(kfTrack);
+            }
+            const newKf: Keyframe = {
+              id: uid('kf'),
+              time,
+              value,
+              easing,
+            };
+            kfTrack.keyframes = [...kfTrack.keyframes, newKf].sort((a, b) => a.time - b.time);
+            return { ...c, keyframeTracks: tracks.map(kt => kt.property === property ? { ...kfTrack! } : kt) };
+          }),
+        })),
+      },
+    }));
+  },
+
+  removeKeyframe: (clipId, property, keyframeId) => {
+    set((s) => ({
+      project: {
+        ...s.project,
+        tracks: s.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c => {
+            if (c.id !== clipId || !c.keyframeTracks) return c;
+            return {
+              ...c,
+              keyframeTracks: c.keyframeTracks.map(kt =>
+                kt.property === property
+                  ? { ...kt, keyframes: kt.keyframes.filter(kf => kf.id !== keyframeId) }
+                  : kt
+              ).filter(kt => kt.keyframes.length > 0),
+            };
+          }),
+        })),
+      },
+    }));
+  },
+
+  updateKeyframe: (clipId, property, keyframeId, patch) => {
+    set((s) => ({
+      project: {
+        ...s.project,
+        tracks: s.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c => {
+            if (c.id !== clipId || !c.keyframeTracks) return c;
+            return {
+              ...c,
+              keyframeTracks: c.keyframeTracks.map(kt =>
+                kt.property === property
+                  ? {
+                      ...kt,
+                      keyframes: kt.keyframes
+                        .map(kf => kf.id === keyframeId ? { ...kf, ...patch } : kf)
+                        .sort((a, b) => a.time - b.time),
+                    }
+                  : kt
+              ),
+            };
+          }),
+        })),
+      },
+    }));
+  },
+
+  getKeyframeValue: (clipId, property, time) => {
+    const s = get();
+    for (const t of s.project.tracks) {
+      const clip = t.clips.find(c => c.id === clipId);
+      if (!clip?.keyframeTracks) continue;
+      const kfTrack = clip.keyframeTracks.find(kt => kt.property === property && kt.enabled);
+      if (!kfTrack || kfTrack.keyframes.length === 0) return null;
+      const kfs = kfTrack.keyframes;
+      if (time <= kfs[0].time) return kfs[0].value;
+      if (time >= kfs[kfs.length - 1].time) return kfs[kfs.length - 1].value;
+      for (let i = 0; i < kfs.length - 1; i++) {
+        if (time >= kfs[i].time && time <= kfs[i + 1].time) {
+          const t0 = kfs[i].time, t1 = kfs[i + 1].time;
+          const v0 = kfs[i].value, v1 = kfs[i + 1].value;
+          const progress = (time - t0) / (t1 - t0);
+          return v0 + (v1 - v0) * progress; // linear interpolation (이징은 3-E에서 확장)
+        }
+      }
+      return null;
+    }
+    return null;
   },
 
   /* ──── 재생/선택 ──── */
