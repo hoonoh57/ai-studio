@@ -51,6 +51,7 @@ interface EditorState {
   removeTrack: (id: string) => void;
   addClip: (trackId: string, clip: Omit<Clip, 'id' | 'trackId'>) => Clip;
   updateClip: (clipId: string, updates: Partial<Clip>) => void;
+  updateClips: (updates: { clipId: string; updates: Partial<Clip> }[]) => void;
   removeClip: (clipId: string) => void;
   splitClip: (clipId: string, time: number) => void;
 
@@ -222,6 +223,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         tracks: s.project.tracks.map((t) => ({
           ...t,
           clips: t.clips.map((c) => (c.id === clipId ? { ...c, ...updates } : c)),
+        })),
+      },
+    })),
+
+  updateClips: (updates) =>
+    set((s) => ({
+      project: {
+        ...s.project,
+        tracks: s.project.tracks.map((t) => ({
+          ...t,
+          clips: t.clips.map((c) => {
+            const up = updates.find((u) => u.clipId === c.id);
+            return up ? { ...c, ...up.updates } : c;
+          }),
         })),
       },
     })),

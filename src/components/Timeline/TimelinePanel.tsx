@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback, memo } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import TimelineToolbar from './TimelineToolbar';
 import TrackHeader from './TrackHeader';
@@ -7,6 +7,7 @@ import TimelineRuler from './TimelineRuler';
 import Playhead from './Playhead';
 import MarkerTrack from './MarkerTrack';
 import { snapTime } from '@/lib/core/snapEngine';
+import { executeTrim } from '@/lib/core/trimEngine';
 
 const PIXELS_PER_SECOND_BASE = 50;
 
@@ -18,9 +19,10 @@ export default function TimelinePanel() {
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const snapEnabled = useEditorStore((s) => s.snapEnabled);
   const markers = useEditorStore((s) => s.markers);
+  const trimMode = useEditorStore((s) => s.trimMode);
 
   const {
-    setCurrentTime, selectClip, addClip, updateClip, splitClip, togglePlay,
+    setCurrentTime, selectClip, addClip, updateClip, updateClips, splitClip, togglePlay,
   } = useEditorStore();
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -45,11 +47,11 @@ export default function TimelinePanel() {
   }, [pps]);
 
   const dragRef = useRef<any>(null);
-  const startDrag = useCallback((e: React.MouseEvent, type: any, clipId: string, origStart: number, origEnd: number) => {
+  const startDrag = useCallback((e: React.MouseEvent, type: any, clipId: string, trackId: string, origStart: number, origEnd: number) => {
     e.preventDefault();
     e.stopPropagation();
     selectClip(clipId);
-    dragRef.current = { type, clipId, startX: e.clientX, origStart, origEnd };
+    dragRef.current = { type, clipId, trackId, startX: e.clientX, origStart, origEnd };
     
     const onMove = (ev: MouseEvent) => {
       if (!dragRef.current) return;
@@ -62,12 +64,16 @@ export default function TimelinePanel() {
       if (d.type === 'move') {
         const s = st(d.origStart + dt);
         updateClip(d.clipId, { timelineStart: s, timelineEnd: s + dur });
-      } else if (d.type === 'trim-left') {
-        const s = st(Math.max(0, d.origStart + dt));
-        if (s < d.origEnd - 0.1) updateClip(d.clipId, { timelineStart: s });
-      } else if (d.type === 'trim-right') {
-        const eEnd = st(d.origEnd + dt);
-        if (eEnd > d.origStart + 0.1) updateClip(d.clipId, { timelineEnd: eEnd });
+      } else {
+        // Advanced Trimming using trimEngine
+        const track = project.tracks.find(t => t.id === d.trackId);
+        const clip = track?.clips.find(c => c.id === d.clipId);
+        const asset = project.assets.find(a => a.id === clip?.assetId);
+        if (!clip || !track) return;
+        
+        const side = d.type === 'trim-left' ? 'left' : 'right';
+        const updates = executeTrim(clip, track, side, dt, trimMode, asset?.duration || 0);
+        if (updates.length > 0) updateClips([...updates]);
       }
     };
     
@@ -78,7 +84,7 @@ export default function TimelinePanel() {
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [pps, selectClip, updateClip, snapEnabled, project.tracks, project.duration, markers, inOut, currentTime, zoom]);
+  }, [pps, selectClip, updateClip, updateClips, snapEnabled, project.tracks, project.duration, project.assets, markers, inOut, currentTime, zoom, trimMode]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -144,9 +150,9 @@ export default function TimelinePanel() {
                 selectedClipId={selectedClipId} onSelectClip={selectClip}
                 onDropClip={(e) => handleDrop(e, t.id)}
                 onDragOverTrack={(e) => e.preventDefault()}
-                onMoveStart={(e, clip) => startDrag(e, 'move', clip.id, clip.timelineStart, clip.timelineEnd)}
-                onTrimLeftStart={(e, clip) => startDrag(e, 'trim-left', clip.id, clip.timelineStart, clip.timelineEnd)}
-                onTrimRightStart={(e, clip) => startDrag(e, 'trim-right', clip.id, clip.timelineStart, clip.timelineEnd)}
+                onMoveStart={(e, clip) => startDrag(e, 'move', clip.id, t.id, clip.timelineStart, clip.timelineEnd)}
+                onTrimLeftStart={(e, clip) => startDrag(e, 'trim-left', clip.id, t.id, clip.timelineStart, clip.timelineEnd)}
+                onTrimRightStart={(e, clip) => startDrag(e, 'trim-right', clip.id, t.id, clip.timelineStart, clip.timelineEnd)}
               />
             ))}
           </div>
