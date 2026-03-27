@@ -60,6 +60,9 @@ export interface Clip {
   groupId?: string;
   /* Phase T-3: 역재생 */
   reverse?: boolean;
+  
+  /* Step 3: 키프레임 애니메이션 */
+  keyframeTracks?: KeyframeTrack[];
 }
 
 export type TrackHeightPreset = 'S' | 'M' | 'L' | 'XL' | 'custom';
@@ -310,3 +313,66 @@ export interface ThumbnailData {
   frames: string[];
   interval: number;
 }
+
+/* ========== Step 3: 키프레임 애니메이션 ========== */
+
+/** 키프레임 가능한 속성 */
+export type KeyframeProperty =
+  | 'x' | 'y' | 'scale' | 'rotation' | 'opacity'
+  | 'volume' | 'blur' | 'brightness' | 'contrast';
+
+/** 이징 함수 타입 */
+export type EasingType =
+  | 'linear'
+  | 'ease-in' | 'ease-out' | 'ease-in-out'
+  | 'ease-in-quad' | 'ease-out-quad' | 'ease-in-out-quad'
+  | 'ease-in-cubic' | 'ease-out-cubic' | 'ease-in-out-cubic'
+  | 'ease-in-back' | 'ease-out-back' | 'ease-in-out-back'
+  | 'ease-in-elastic' | 'ease-out-elastic'
+  | 'ease-out-bounce'
+  | 'spring'
+  | 'custom';
+
+/** 단일 키프레임 */
+export interface Keyframe {
+  id: string;
+  time: number;
+  value: number;
+  easing: EasingType;
+  cubicBezier?: [number, number, number, number];
+}
+
+/** 하나의 속성에 대한 키프레임 트랙 */
+export interface KeyframeTrack {
+  property: KeyframeProperty;
+  keyframes: Keyframe[];
+  enabled: boolean;
+}
+
+/* ========== Step 3: Command 시스템 (혁신 엔진 기반) ========== */
+
+/** 명령 카테고리 */
+export type CommandCategory =
+  | 'clip' | 'track' | 'keyframe' | 'transition'
+  | 'effect' | 'playback' | 'project' | 'ai';
+
+/** 직렬화 가능한 편집 명령 */
+export interface EditorCommand {
+  id: string;
+  type: string;
+  category: CommandCategory;
+  params: Record<string, unknown>;
+  timestamp: number;
+  label: string;
+}
+
+/** 스크립트 매크로 */
+export interface ScriptMacro {
+  id: string;
+  name: string;
+  description: string;
+  commands: EditorCommand[];
+  createdAt: number;
+  tags: string[];
+}
+
