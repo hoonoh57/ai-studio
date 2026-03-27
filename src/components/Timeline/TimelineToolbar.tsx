@@ -20,6 +20,10 @@ const TRACK_TYPE_MENU: { type: TrackType; label: string; icon: string }[] = [
   { type: 'effect', label: 'Effect', icon: '✨' },
 ];
 
+interface TimelineToolbarProps {
+  selectedClipIds?: Set<string>;
+}
+
 function isClipLocked(clipId: string, tracks: { locked: boolean; clips: { id: string }[] }[]): boolean {
   for (const t of tracks) {
     if (t.locked && t.clips.some(c => c.id === clipId)) return true;
@@ -27,12 +31,13 @@ function isClipLocked(clipId: string, tracks: { locked: boolean; clips: { id: st
   return false;
 }
 
-export const TimelineToolbar: React.FC = () => {
+export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({ selectedClipIds = new Set() }) => {
   const {
     trimMode, setTrimMode, snapEnabled, toggleSnap, zoom, setZoom,
     skillLevel, selectedClipId, currentTime, addTrackChecked,
     setInPoint, setOutPoint, addMarker,
     undo, redo, canUndo, canRedo, project, splitClip, pushUndo,
+    groupClips, ungroupClips,
   } = useEditorStore();
 
   const config = SKILL_CONFIGS[skillLevel] ?? SKILL_CONFIGS.beginner;
@@ -125,6 +130,23 @@ export const TimelineToolbar: React.FC = () => {
       >
         ✂
       </button>
+
+      {/* T-3.3: 클립 그룹핑 버튼 */}
+      {config.showClipGrouping && (
+        <>
+          <button
+            style={btnStyle(selectedClipIds.size < 2)}
+            onClick={() => {
+              if (selectedClipIds.size >= 2) {
+                groupClips(Array.from(selectedClipIds));
+              }
+            }}
+            title="그룹 (Shift+Click 후 선택)"
+          >
+            📦
+          </button>
+        </>
+      )}
 
       <div style={{ flex: 1 }} />
       <span style={{ fontSize: FONT_XS, color: '#777' }}>{Math.round(zoom * 100)}%</span>

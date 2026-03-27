@@ -9,6 +9,7 @@ import { TrackRow } from './TrackRow';
 import { TimelineRuler } from './TimelineRuler';
 import { Playhead } from './Playhead';
 import { MarkerTrack } from './MarkerTrack';
+import { ClipContextMenu } from './ClipContextMenu';
 import { snapTime } from '@/lib/core/snapEngine';
 
 /* ========== 상수 ========== */
@@ -42,7 +43,7 @@ export const TimelinePanel: React.FC = () => {
     setCurrentTime, selectClip, addClip, updateClip, removeClip,
     recalcDuration, currentTime, pushUndo, undo, redo, canUndo, canRedo,
     splitClip, addMarker, togglePlay, skillLevel, addTrackChecked,
-    reorderTracks, moveClipToTrack, linkClips, unlinkClip,
+    reorderTracks, moveClipToTrack, linkClips, unlinkClip, trimMode,
   } = store;
 
   const config = SKILL_CONFIGS[skillLevel] ?? SKILL_CONFIGS.beginner;
@@ -59,6 +60,11 @@ export const TimelinePanel: React.FC = () => {
 
   /* ── I-2 FIX: 멀티 셀렉션 상태 ── */
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set());
+
+  /* ── T-3.5: 클립 컨텍스트 메뉴 상태 ── */
+  const [clipCtxMenu, setClipCtxMenu] = useState<{
+    clipId: string; trackId: string; x: number; y: number;
+  } | null>(null);
 
   const pps = PPS_BASE * zoom;
   const totalW = Math.max(project.duration * pps, 800);
@@ -92,8 +98,6 @@ export const TimelinePanel: React.FC = () => {
     const px = currentTime * pps;
     const scrollLeft = el.scrollLeft;
     const w = el.clientWidth;
-    /* 줌이 낮을수록(0.1x) 화면이 넓어지므로 마진을 크게,
-       줌이 높을수록(10x) 화면이 좁아지므로 마진을 작게 */
     const margin = Math.max(40, Math.min(w * 0.15, 200));
     if (px < scrollLeft + margin || px > scrollLeft + w - margin) {
       el.scrollLeft = Math.max(0, px - w / 2);
@@ -134,7 +138,6 @@ export const TimelinePanel: React.FC = () => {
         }
         return next;
       });
-      /* 마지막으로 Shift 클릭한 것을 primary로 설정 */
       selectClip(clipId);
     } else {
       setSelectedClipIds(new Set([clipId]));
@@ -159,6 +162,15 @@ export const TimelinePanel: React.FC = () => {
     unlinkClip(selectedClipId);
   }, [selectedClipId, findClipAndTrack, pushUndo, unlinkClip]);
 
+  /* ── T-3.5: 클립 컨텍스트 메뉴 핸들러 ── */
+  const handleClipContextMenu = useCallback((
+    e: React.MouseEvent, clipId: string, trackId: string,
+  ) => {
+    e.preventDefault();
+    if (!config.showClipContextMenu) return;
+    setClipCtxMenu({ clipId, trackId, x: e.clientX, y: e.clientY });
+  }, [config.showClipContextMenu]);
+
   /* 클립 마우스 다운 — 이동/트림 시작 */
   const handleMouseDown = useCallback((
     e: React.MouseEvent, clipId: string, trackId: string,
@@ -177,7 +189,6 @@ export const TimelinePanel: React.FC = () => {
       originalStartTime: found.clip.startTime,
       originalDuration: found.clip.duration,
     };
-    /* Shift 키 없이 mouseDown이면 단일 선택 */
     if (!e.shiftKey) {
       handleClipSelect(clipId, false);
     }
@@ -193,12 +204,21 @@ export const TimelinePanel: React.FC = () => {
       if (d.type === 'move') {
         updateClip(d.clipId, { startTime: snap(Math.max(0, d.startTime + dt)) });
       } else if (d.type === 'trim-left') {
-        const newStart = snap(Math.max(0, d.startTime + dt));
-        const shrink = newStart - d.originalStartTime;
-        updateClip(d.clipId, {
-          startTime: newStart,
-          duration: Math.max(0.1, d.originalDuration - shrink),
-        });
+        /* T-3.4: 트림 모드별 동작 */
+        if (trimMode === 'slip') {
+           const sourceShift = dt;
+           updateClip(d.clipId, {
+             inPoint: Math.max(0, d.startTime + sourceShift),
+             outPoint: Math.max(0.1, d.startTime + d.originalDuration + sourceShift),
+           });
+        } else {
+           const newStart = snap(Math.max(0, d.startTime + dt));
+           const shrink = newStart - d.originalStartTime;
+           updateClip(d.clipId, {
+             startTime: newStart,
+             duration: Math.max(0.1, d.originalDuration - shrink),
+           });
+        }
       } else if (d.type === 'trim-right') {
         updateClip(d.clipId, {
           duration: snap(Math.max(0.1, d.originalDuration + dt)),
@@ -224,7 +244,7 @@ export const TimelinePanel: React.FC = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
-  }, [pps, snap, updateClip, recalcDuration, findTrackAtY, moveClipToTrack]);
+  }, [pps, snap, updateClip, recalcDuration, findTrackAtY, moveClipToTrack, trimMode]);
 
   /* 키보드 단축키 */
   useEffect(() => {
@@ -261,7 +281,6 @@ export const TimelinePanel: React.FC = () => {
         addMarker({ id: `mkr_${Date.now()}`, time: currentTime, label: '', color: '#FFD700' });
         return;
       }
-      /* I-2 FIX: Ctrl+L = 링크, Ctrl+Shift+L = 언링크 */
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && !e.shiftKey) {
         e.preventDefault();
         handleLinkSelected();
@@ -277,10 +296,10 @@ export const TimelinePanel: React.FC = () => {
       if (e.key === 'ArrowRight') { setCurrentTime(currentTime + 1 / 30); return; }
       if (e.key === 'Home') { setCurrentTime(0); return; }
       if (e.key === 'End') { setCurrentTime(project.duration); return; }
-      /* Escape: 셀렉션 해제 */
       if (e.key === 'Escape') {
         selectClip(null);
         setSelectedClipIds(new Set());
+        setClipCtxMenu(null);
         return;
       }
     };
@@ -368,7 +387,6 @@ export const TimelinePanel: React.FC = () => {
     }
   }, []);
 
-  /* ── I-2: 링크 가능 여부 판단 ── */
   const canLink = config.showLinkedSelection && selectedClipIds.size === 2;
   const canUnlink = config.showLinkedSelection && selectedClipId != null &&
     (() => { const f = findClipAndTrack(selectedClipId); return !!f?.clip.linkedClipId; })();
@@ -386,7 +404,7 @@ export const TimelinePanel: React.FC = () => {
         overflow: 'hidden',
       }}
     >
-      <TimelineToolbar />
+      <TimelineToolbar selectedClipIds={selectedClipIds} />
 
       {/* ── I-2 FIX: 멀티 셀렉션 & 링크 바 ── */}
       {config.showLinkedSelection && selectedClipIds.size > 0 && (
@@ -447,7 +465,6 @@ export const TimelinePanel: React.FC = () => {
       )}
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* ── 좌측: 트랙 헤더 ── */}
         <div style={{
           width: TRACK_LABEL_W,
           minWidth: TRACK_LABEL_W,
@@ -497,13 +514,11 @@ export const TimelinePanel: React.FC = () => {
           </div>
         </div>
 
-        {/* ── 우측: 타임라인 본체 ── */}
         <div
           ref={mainScrollRef}
           onScroll={() => syncScroll('main')}
           style={{ flex: 1, overflow: 'auto', position: 'relative' }}
         >
-          {/* 룰러 — sticky */}
           <div
             style={{
               position: 'sticky',
@@ -518,13 +533,11 @@ export const TimelinePanel: React.FC = () => {
             <MarkerTrack markers={markers} pps={pps} totalWidth={totalW} />
           </div>
 
-          {/* 트랙 영역 */}
           <div style={{
             position: 'relative',
             width: totalW,
             minHeight: totalTrackH + AUTO_ZONE_H,
           }}>
-            {/* Playhead 오버레이 */}
             <div style={{
               position: 'absolute',
               top: -RULER_H,
@@ -537,7 +550,6 @@ export const TimelinePanel: React.FC = () => {
               <Playhead pps={pps} />
             </div>
 
-            {/* 트랙 행들 */}
             {tracks.map(t => (
               <TrackRow
                 key={t.id}
@@ -553,10 +565,10 @@ export const TimelinePanel: React.FC = () => {
                 onTrimRight={(e, clipId) => handleMouseDown(e, clipId, t.id, 'trim-right')}
                 onDrop={(e) => handleDrop(e, t.id)}
                 onDragOver={handleDragOver}
+                onClipContextMenu={handleClipContextMenu}
               />
             ))}
 
-            {/* 자동 트랙 생성 드롭존 */}
             <div
               style={{
                 height: AUTO_ZONE_H,
@@ -576,6 +588,19 @@ export const TimelinePanel: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {clipCtxMenu && (() => {
+        const found = findClipAndTrack(clipCtxMenu.clipId);
+        if (!found) return null;
+        return (
+          <ClipContextMenu
+            clip={found.clip}
+            trackId={clipCtxMenu.trackId}
+            position={{ x: clipCtxMenu.x, y: clipCtxMenu.y }}
+            onClose={() => setClipCtxMenu(null)}
+          />
+        );
+      })()}
     </div>
   );
 };

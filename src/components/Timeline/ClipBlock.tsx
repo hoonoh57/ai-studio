@@ -161,6 +161,59 @@ export function ClipBlock({
         )}
       </div>
 
+      {/* T-3.6: 속도 뱃지 */}
+      {clip.speed !== 1 && (
+        <div style={{
+          position: 'absolute',
+          bottom: 2,
+          left: 4,
+          fontSize: 9,
+          color: '#ffd700',
+          opacity: 0.8,
+          pointerEvents: 'none',
+          zIndex: 3,
+          background: 'rgba(0,0,0,0.5)',
+          borderRadius: 2,
+          padding: '0 3px',
+        }}>
+          {clip.speed}x{clip.reverse ? '⏪' : ''}
+        </div>
+      )}
+
+      {/* T-3.2: 블렌드 모드 뱃지 (normal이 아닐 때) */}
+      {clip.blendMode !== 'normal' && (
+        <div style={{
+          position: 'absolute',
+          bottom: 2,
+          right: HANDLE_WIDTH + 4,
+          fontSize: 9,
+          color: '#da70d6',
+          opacity: 0.8,
+          pointerEvents: 'none',
+          zIndex: 3,
+          background: 'rgba(0,0,0,0.5)',
+          borderRadius: 2,
+          padding: '0 3px',
+        }}>
+          {clip.blendMode}
+        </div>
+      )}
+
+      {/* T-3.3: 그룹 인디케이터 */}
+      {clip.groupId && (
+        <div style={{
+          position: 'absolute',
+          top: 2,
+          right: HANDLE_WIDTH + 4,
+          fontSize: 9,
+          opacity: 0.6,
+          pointerEvents: 'none',
+          zIndex: 3,
+        }}>
+          📦
+        </div>
+      )}
+
       {/* Name */}
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none', zIndex: 5 }}>
         {assetName}

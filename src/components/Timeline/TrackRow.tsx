@@ -17,12 +17,14 @@ interface TrackRowProps {
   onTrimRight: (e: React.MouseEvent, clipId: string) => void;
   onDrop: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
+  /* Phase T-3: 컨텍스트 메뉴 */
+  onClipContextMenu?: (e: React.MouseEvent, clipId: string, trackId: string) => void;
 }
 
 export const TrackRow = forwardRef<HTMLDivElement, TrackRowProps>(({
   track, assets, pps, selectedClipId, selectedClipIds,
   onSelectClip, onMoveClip, onTrimLeft, onTrimRight,
-  onDrop, onDragOver,
+  onDrop, onDragOver, onClipContextMenu,
 }, ref) => {
   const store = useEditorStore();
   const trackColor = track.color || '#4A90D9';
@@ -78,28 +80,35 @@ export const TrackRow = forwardRef<HTMLDivElement, TrackRowProps>(({
         /* I-2 FIX: 멀티 셀렉션 하이라이트 */
         const isSelected = clip.id === selectedClipId || selectedClipIds.has(clip.id);
         return (
-          <ClipBlock
+          <div
             key={clip.id}
-            clip={clip}
-            track={track}
-            assetName={asset?.name ?? 'Unknown'}
-            isSelected={isSelected}
-            pps={pps}
-            trackHeight={track.height}
-            onSelect={(e) => onSelectClip(clip.id, e)}
-            onMoveStart={(e) => {
-              if (track.locked) return;
-              onMoveClip(e, clip.id);
+            onContextMenu={(e) => {
+              e.preventDefault();
+              onClipContextMenu?.(e, clip.id, track.id);
             }}
-            onTrimLeftStart={(e) => {
-              if (track.locked) return;
-              onTrimLeft(e, clip.id);
-            }}
-            onTrimRightStart={(e) => {
-              if (track.locked) return;
-              onTrimRight(e, clip.id);
-            }}
-          />
+          >
+            <ClipBlock
+              clip={clip}
+              track={track}
+              assetName={asset?.name ?? 'Unknown'}
+              isSelected={isSelected}
+              pps={pps}
+              trackHeight={track.height}
+              onSelect={(e) => onSelectClip(clip.id, e)}
+              onMoveStart={(e) => {
+                if (track.locked) return;
+                onMoveClip(e, clip.id);
+              }}
+              onTrimLeftStart={(e) => {
+                if (track.locked) return;
+                onTrimLeft(e, clip.id);
+              }}
+              onTrimRightStart={(e) => {
+                if (track.locked) return;
+                onTrimRight(e, clip.id);
+              }}
+            />
+          </div>
         );
       })}
     </div>

@@ -14,6 +14,15 @@ export type BlendMode =
   | 'darken' | 'lighten' | 'color-dodge' | 'color-burn'
   | 'hard-light' | 'soft-light' | 'difference' | 'exclusion';
 
+export const BLEND_MODE_LIST: BlendMode[] = [
+  'normal', 'multiply', 'screen', 'overlay',
+  'darken', 'lighten', 'color-dodge', 'color-burn',
+  'hard-light', 'soft-light', 'difference', 'exclusion',
+];
+
+/* ── T-3.1: 속도 프리셋 ── */
+export const SPEED_PRESETS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4] as const;
+
 export interface Asset {
   id: string;
   name: string;
@@ -33,7 +42,6 @@ export interface Filter {
   params: Record<string, number | string | boolean>;
 }
 
-/* ─── Clip 인터페이스: linked 필드 optional 추가 ─── */
 export interface Clip {
   id: string;
   assetId: string;
@@ -47,27 +55,21 @@ export interface Clip {
   opacity: number;
   volume?: number;
   speed: number;
-  /* Phase T-2: Linked Selection (Optional) */
+  /* Phase T-2 */
   linkedClipId?: string;
   groupId?: string;
+  /* Phase T-3: 역재생 */
+  reverse?: boolean;
 }
 
-/* ─── 트랙 높이 프리셋 (신규) ─── */
 export type TrackHeightPreset = 'S' | 'M' | 'L' | 'XL' | 'custom';
 
 export const TRACK_HEIGHT_PRESETS: Record<Exclude<TrackHeightPreset, 'custom'>, number> = {
-  S: 30,
-  M: 48,
-  L: 72,
-  XL: 120,
+  S: 30, M: 48, L: 72, XL: 120,
 };
 
-/* ─── 트랙 기본 컬러 (신규) ─── */
 export const DEFAULT_TRACK_COLORS: Record<TrackType, string> = {
-  video: '#4A90D9',
-  audio: '#50C878',
-  text: '#FFB347',
-  effect: '#DA70D6',
+  video: '#4A90D9', audio: '#50C878', text: '#FFB347', effect: '#DA70D6',
 };
 
 export const TRACK_COLOR_PALETTE = [
@@ -77,7 +79,6 @@ export const TRACK_COLOR_PALETTE = [
   '#BB8FCE', '#85C1E9', '#F1948A', '#82E0AA',
 ];
 
-/* ─── Track 인터페이스: 신규 필드를 optional로 추가 ─── */
 export interface Track {
   id: string;
   name: string;
@@ -87,14 +88,12 @@ export interface Track {
   locked: boolean;
   visible: boolean;
   height: number;
-  /* Phase T-2 신규 (optional — 기존 코드 호환) */
   heightPreset?: TrackHeightPreset;
   color?: string;
   solo?: boolean;
   order?: number;
 }
 
-/* ========== Project ========== */
 export interface Project {
   id: string;
   name: string;
@@ -109,7 +108,6 @@ export interface Project {
   inOut?: InOutRange;
 }
 
-/* ========== 스킬 레벨 시스템 ========== */
 export type SkillLevel = 'beginner' | 'intermediate' | 'advanced' | 'expert';
 
 export type EditorTab =
@@ -120,7 +118,6 @@ export type PanelId =
   | 'media' | 'preview' | 'timeline' | 'properties'
   | 'effects' | 'audio-mixer' | 'color-wheels' | 'ai' | 'text' | 'audio' | 'sticker' | 'transition';
 
-/* ─── SkillConfig: 신규 필드 optional 추가 ─── */
 export interface SkillConfig {
   label: string;
   maxTracks: number;
@@ -135,16 +132,19 @@ export interface SkillConfig {
   showMulticam: boolean;
   enabledTabs: EditorTab[];
   enabledPanels: PanelId[];
-  /* Phase T-2 (optional) */
+  /* Phase T-2 */
   showTrackColor?: boolean;
   showTrackHeightPresets?: boolean;
   showTrackReorder?: boolean;
   showTrackDuplicate?: boolean;
   showSoloMode?: boolean;
   showLinkedSelection?: boolean;
+  /* Phase T-3 */
+  showSpeedControl?: boolean;
+  showClipContextMenu?: boolean;
+  showClipGrouping?: boolean;
 }
 
-/* ─── SKILL_CONFIGS 에 Phase T-2 필드 추가 (Optional 적용) ─── */
 export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
   beginner: {
     label: '초급',
@@ -166,6 +166,9 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     showTrackDuplicate: false,
     showSoloMode: false,
     showLinkedSelection: false,
+    showSpeedControl: false,
+    showClipContextMenu: false,
+    showClipGrouping: false,
   },
   intermediate: {
     label: '중급',
@@ -187,6 +190,9 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     showTrackDuplicate: true,
     showSoloMode: true,
     showLinkedSelection: false,
+    showSpeedControl: true,
+    showClipContextMenu: true,
+    showClipGrouping: false,
   },
   advanced: {
     label: '고급',
@@ -208,6 +214,9 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     showTrackDuplicate: true,
     showSoloMode: true,
     showLinkedSelection: true,
+    showSpeedControl: true,
+    showClipContextMenu: true,
+    showClipGrouping: true,
   },
   expert: {
     label: '전문가',
@@ -229,10 +238,12 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     showTrackDuplicate: true,
     showSoloMode: true,
     showLinkedSelection: true,
+    showSpeedControl: true,
+    showClipContextMenu: true,
+    showClipGrouping: true,
   },
 };
 
-/* ========== 에셋→트랙 타입 매핑 ========== */
 export function assetTypeToTrackType(assetType: Asset['type']): TrackType {
   switch (assetType) {
     case 'audio': return 'audio';
@@ -244,7 +255,6 @@ export function assetTypeToTrackType(assetType: Asset['type']): TrackType {
   }
 }
 
-/* ========== 타임라인 엔진 타입 ========== */
 export type TrimMode = 'normal' | 'ripple' | 'roll' | 'slip' | 'slide';
 export type DragType = 'move' | 'trim-left' | 'trim-right';
 

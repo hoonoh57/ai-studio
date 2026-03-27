@@ -5,7 +5,7 @@ import {
   TrackType, SkillLevel, SkillConfig, SKILL_CONFIGS,
   EditorTab, PanelId, WaveformData, ThumbnailData,
   DEFAULT_TRACK_COLORS, TRACK_HEIGHT_PRESETS, TrackHeightPreset,
-  assetTypeToTrackType, TrimMode,
+  assetTypeToTrackType, TrimMode, BlendMode,
 } from '@/types/project';
 import { createMediaSlice, MEDIA_INITIAL_STATE, MediaSlice } from './mediaSlice';
 
@@ -89,6 +89,13 @@ export interface EditorState {
   splitClip: (clipId: string, time: number) => void;
   moveClipToTrack: (clipId: string, fromTrackId: string, toTrackId: string) => void;
 
+  /* Phase T-3: 클립 고급 편집 */
+  setClipSpeed: (clipId: string, speed: number, reverse?: boolean) => void;
+  setClipBlendMode: (clipId: string, mode: BlendMode) => void;
+  groupClips: (clipIds: string[]) => void;
+  ungroupClips: (groupId: string) => void;
+  getClipsInGroup: (groupId: string) => Clip[];
+
   /* 재생/선택 */
   currentTime: number;
   isPlaying: boolean;
@@ -163,10 +170,6 @@ function nextTrackName(tracks: Track[], type: TrackType): string {
   return `${prefix} ${maxNum + 1}`;
 }
 
-/* ── I-3 FIX: 클립-트랙 타입 호환성 테이블 ──
- * video 클립은 video/effect 트랙에, audio 클립은 audio 트랙에,
- * text 클립은 text 트랙에, effect 클립은 effect/video 트랙에 허용.
- */
 const TRACK_TYPE_COMPAT: Record<TrackType, readonly TrackType[]> = {
   video:  ['video', 'effect'],
   audio:  ['audio'],
@@ -179,9 +182,7 @@ function isClipCompatibleWithTrack(
   fromTrack: Track,
   toTrack: Track,
 ): boolean {
-  /* 같은 타입이면 항상 호환 */
   if (fromTrack.type === toTrack.type) return true;
-  /* 출발 트랙 타입 기준으로 호환 목록 체크 */
   const allowed = TRACK_TYPE_COMPAT[fromTrack.type];
   return allowed ? allowed.includes(toTrack.type) : false;
 }
@@ -458,22 +459,16 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     }));
   },
 
-  /* ── I-3 FIX: 클립 트랙 간 이동 — 타입 호환성 검증 추가 ── */
   moveClipToTrack: (clipId, fromTrackId, toTrackId) => {
     if (fromTrackId === toTrackId) return;
     const s = get();
     const fromTrack = s.project.tracks.find(t => t.id === fromTrackId);
     const toTrack = s.project.tracks.find(t => t.id === toTrackId);
     if (!fromTrack || !toTrack) return;
-
-    /* 타입 호환성 체크 */
     if (!isClipCompatibleWithTrack(clipId, fromTrack, toTrack)) {
-      console.warn(
-        `[moveClipToTrack] 호환 불가: ${fromTrack.type} 트랙의 클립을 ${toTrack.type} 트랙으로 이동할 수 없습니다.`,
-      );
+      console.warn(`[moveClipToTrack] 호환 불가: ${fromTrack.type} 트랙의 클립을 ${toTrack.type} 트랙으로 이동할 수 없습니다.`);
       return;
     }
-
     set((s) => {
       let movedClip: Clip | undefined;
       const tracksAfterRemove = s.project.tracks.map(t => {
@@ -493,6 +488,103 @@ export const useEditorStore = create<StoreType>((set, get) => ({
       });
       return { project: { ...s.project, tracks: tracksAfterAdd } };
     });
+  },
+
+  /* ── Phase T-3: 클립 고급 편집 ── */
+
+  /* T-3.1: 속도 변경 — duration 자동 재계산 */
+  setClipSpeed: (clipId, speed, reverse) => {
+    const s = get();
+    let originalClip: Clip | undefined;
+    for (const t of s.project.tracks) {
+      const c = t.clips.find(cl => cl.id === clipId);
+      if (c) { originalClip = c; break; }
+    }
+    if (!originalClip) return;
+
+    const clampedSpeed = Math.max(0.1, Math.min(10, speed));
+    /* 원본 소스 길이 = (outPoint - inPoint) / 기존 speed */
+    const sourceDuration = (originalClip.outPoint - originalClip.inPoint) / originalClip.speed;
+    const newDuration = sourceDuration / clampedSpeed;
+
+    s.pushUndo('속도 변경');
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c =>
+            c.id === clipId
+              ? {
+                  ...c,
+                  speed: clampedSpeed,
+                  duration: newDuration,
+                  reverse: reverse ?? c.reverse ?? false,
+                }
+              : c
+          ),
+        })),
+      },
+    }));
+  },
+
+  /* T-3.2: 블렌드 모드 변경 */
+  setClipBlendMode: (clipId, mode) => {
+    get().pushUndo('블렌드 모드 변경');
+    set((s) => ({
+      project: {
+        ...s.project,
+        tracks: s.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c =>
+            c.id === clipId ? { ...c, blendMode: mode } : c
+          ),
+        })),
+      },
+    }));
+  },
+
+  /* T-3.3: 클립 그룹핑 */
+  groupClips: (clipIds) => {
+    if (clipIds.length < 2) return;
+    const groupId = uid('grp');
+    get().pushUndo('클립 그룹');
+    set((s) => ({
+      project: {
+        ...s.project,
+        tracks: s.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c =>
+            clipIds.includes(c.id) ? { ...c, groupId } : c
+          ),
+        })),
+      },
+    }));
+  },
+
+  ungroupClips: (groupId) => {
+    get().pushUndo('그룹 해제');
+    set((s) => ({
+      project: {
+        ...s.project,
+        tracks: s.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c =>
+            c.groupId === groupId ? { ...c, groupId: undefined } : c
+          ),
+        })),
+      },
+    }));
+  },
+
+  getClipsInGroup: (groupId) => {
+    const clips: Clip[] = [];
+    for (const t of get().project.tracks) {
+      for (const c of t.clips) {
+        if (c.groupId === groupId) clips.push(c);
+      }
+    }
+    return clips;
   },
 
   /* ──── 재생/선택 ──── */
@@ -589,7 +681,6 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   canRedo: () => get().redoStack.length > 0,
   getSkillConfig: () => SKILL_CONFIGS[get().skillLevel] || SKILL_CONFIGS.beginner,
 
-  /* ── I-1 FIX: as any 제거 — createMediaSlice가 제네릭 <T extends MediaSliceState>이므로 타입 안전 ── */
   ...MEDIA_INITIAL_STATE,
   ...createMediaSlice(set, get),
 }));
