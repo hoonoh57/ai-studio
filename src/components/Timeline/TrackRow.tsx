@@ -3,6 +3,7 @@ import React, { forwardRef } from 'react';
 import type { Track, Asset } from '@/types/project';
 import { useEditorStore } from '@/stores/editorStore';
 import { ClipBlock } from './ClipBlock';
+import { TransitionBlock } from './TransitionBlock';
 
 interface TrackRowProps {
   track: Track;
@@ -111,6 +112,24 @@ export const TrackRow = forwardRef<HTMLDivElement, TrackRowProps>(({
           </div>
         );
       })}
+
+      {/* 전환 블록 (Phase T-4) */}
+      {store.transitions
+        .filter(t => track.clips.some(c => c.id === t.clipAId))
+        .map(t => {
+          const clipA = track.clips.find(c => c.id === t.clipAId);
+          if (!clipA) return null;
+          const clipAEnd = (clipA.startTime + clipA.duration) * pps;
+          return (
+            <TransitionBlock
+              key={t.id}
+              transition={t}
+              clipAEnd={clipAEnd}
+              pps={pps}
+              trackHeight={track.height}
+            />
+          );
+        })}
     </div>
   );
 });

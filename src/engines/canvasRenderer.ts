@@ -160,7 +160,8 @@ export function renderFrame(params: RenderFrameParams): void {
     // 4. 전환 모드
     if (transition && transition.progress >= 0) {
         const def = effectRegistry.get(transition.definitionId);
-        if (def) {
+        if (def && inputA && inputB) {
+            // 정상: 두 소스 모두 준비됨 → 전환 효과 렌더링
             const renderCtx: EffectRenderContext = {
                 time: 0,
                 progress: transition.progress,
@@ -173,21 +174,21 @@ export function renderFrame(params: RenderFrameParams): void {
             if (result.type === 'canvas') {
                 result.draw(ctx);
             }
-        } else {
-            // fallback: dissolve
-            ctx.globalAlpha = 1;
-            if (inputA) try { ctx.drawImage(inputA, 0, 0, width, height); } catch { }
-            if (inputB) {
-                ctx.globalAlpha = transition.progress;
-                try { ctx.drawImage(inputB, 0, 0, width, height); } catch { }
-            }
-            ctx.globalAlpha = 1;
+        } else if (inputA && !inputB) {
+            // 폴백: B가 아직 준비 안됨 → A만 그리기 (검은색 방지)
+            ctx.drawImage(inputA, 0, 0, width, height);
+        } else if (!inputA && inputB) {
+            // 폴백: A가 없으면 B만 그리기
+            ctx.drawImage(inputB, 0, 0, width, height);
         }
+        // 둘 다 없으면 이전 프레임 유지 (clearRect 하지 않음)
     } else {
         // 5. 단일 클립 모드 — 소스 그리기
-        if (inputA) {
-            try { ctx.drawImage(inputA, 0, 0, width, height); } catch { }
+        const source = (videoA && isVideoReady(videoA)) ? videoA : imageA;
+        if (source) {
+            try { ctx.drawImage(source, 0, 0, width, height); } catch { }
         }
+        // source 없으면 이전 프레임 유지
     }
 
     // 6. 필터/모션 효과 순차 적용

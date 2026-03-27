@@ -48,12 +48,17 @@ const styles = {
     background: CANVAS_BG, minHeight: MIN_AREA_HEIGHT, position: 'relative' as const,
   },
   canvasWrap: {
-    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    overflow: 'hidden', position: 'relative' as const,
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    background: '#000',
+    position: 'relative' as const,
   },
   canvas: {
-    maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' as const,
     background: CANVAS_BG,
+    display: 'block',
   },
   controls: {
     height: CONTROLS_HEIGHT, background: 'var(--bg-secondary)',
@@ -101,6 +106,47 @@ export function PreviewArea(): React.ReactElement {
       ctxRef.current = canvasRef.current.getContext('2d', { willReadFrequently: true });
     }
   }, []);
+
+  /* ── 캔버스 크기 제어 (ResizeObserver) ── */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const container = canvas.parentElement;
+    if (!container) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      const { clientWidth, clientHeight } = container;
+      const projW = project?.width || 1920;
+      const projH = project?.height || 1080;
+      const projAspect = projW / projH;
+      const containerAspect = clientWidth / clientHeight;
+
+      let displayW: number, displayH: number;
+      if (containerAspect > projAspect) {
+        displayH = clientHeight;
+        displayW = clientHeight * projAspect;
+      } else {
+        displayW = clientWidth;
+        displayH = clientWidth / projAspect;
+      }
+
+      canvas.style.width = `${Math.floor(displayW)}px`;
+      canvas.style.height = `${Math.floor(displayH)}px`;
+
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(displayW * dpr);
+      canvas.height = Math.floor(displayH * dpr);
+
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (ctx) {
+        ctx.scale(dpr, dpr);
+        ctxRef.current = ctx;
+      }
+    });
+
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, [project.width, project.height]);
 
   /* ── 현재 시간의 활성 클립 찾기 ── */
   const activeClip: ActiveClipData | null = useMemo(() => {
@@ -291,8 +337,8 @@ export function PreviewArea(): React.ReactElement {
     const ctx = ctxRef.current;
     if (!canvas || !ctx) return;
 
-    const w = project.resolution?.width ?? 1920;
-    const h = project.resolution?.height ?? 1080;
+    const w = project.width ?? 1920;
+    const h = project.height ?? 1080;
 
     // 이미지 소스 결정
     let imageA: HTMLImageElement | null = null;
@@ -306,8 +352,9 @@ export function PreviewArea(): React.ReactElement {
     // 전환 정보
     const transitionParam = activeTransition
       ? {
-        definitionId: transitionTypeToDefinitionId(activeTransition.type),
+        definitionId: `transition-${activeTransition.type}`, // 'dissolve' → 'transition-dissolve'
         progress: activeTransition.progress,
+        duration: activeTransition.duration, // ★ ADD
       }
       : null;
 
@@ -325,7 +372,7 @@ export function PreviewArea(): React.ReactElement {
       activeEffects,
       transition: transitionParam,
     });
-  }, [currentTime, activeClip, activeTransition, project.fps, project.resolution]);
+  }, [currentTime, activeClip, activeTransition, project.fps, project.width, project.height]);
 
   /* ── 프레임 스텝 ── */
   const stepFrame = useCallback(
@@ -357,8 +404,8 @@ export function PreviewArea(): React.ReactElement {
         <canvas
           ref={canvasRef}
           style={styles.canvas}
-          width={project.resolution?.width ?? 1920}
-          height={project.resolution?.height ?? 1080}
+          width={project.width || 1920}
+          height={project.height || 1080}
         />
       </div>
 

@@ -31,14 +31,7 @@ const WAVEFORM_HEIGHT_RATIO = 0.35;
 const VISUALIZATION_DIVIDER = '1px solid rgba(255,255,255,0.1)';
 const MULTI_SELECTED_BORDER = '2px solid rgba(108, 92, 231, 0.8)';
 
-/* ★ NEW: 전환 오버레이 색상 */
-const TRANSITION_OVERLAY_COLOR = 'rgba(138, 43, 226, 0.35)';
-const TRANSITION_ICON_MAP: Record<string, string> = {
-  'dissolve': '🌊', 'fade-black': '⬛', 'fade-white': '⬜',
-  'wipe-left': '◀', 'wipe-right': '▶', 'wipe-up': '🔼', 'wipe-down': '🔽',
-  'slide-left': '⏪', 'slide-right': '⏩',
-  'zoom-in': '🔍', 'zoom-out': '🔎', 'blur': '🌫',
-};
+
 
 const handleBase: React.CSSProperties = {
   width: HANDLE_WIDTH,
@@ -97,10 +90,6 @@ export function ClipBlock({
   const thumbHeight = showThumbStrip ? clipHeight * THUMBNAIL_HEIGHT_RATIO : 0;
   const waveHeight = showWave ? (showThumbStrip ? clipHeight * WAVEFORM_HEIGHT_RATIO : clipHeight) : 0;
 
-  /* ★ NEW: 이 클립에 연결된 전환 찾기 */
-  const transitionAsA = transitions.find(t => t.clipAId === clip.id);  // 이 클립이 from (끝에 전환)
-  const transitionAsB = transitions.find(t => t.clipBId === clip.id);  // 이 클립이 to (시작에 전환)
-
   /* ★ NEW: 효과/키프레임 카운트 */
   const filterCount = clip.filters?.length ?? 0;
   const kfCount = clip.keyframeTracks?.reduce((sum, kt) => sum + kt.keyframes.length, 0) ?? 0;
@@ -133,50 +122,6 @@ export function ClipBlock({
       onClick={(e) => { e.stopPropagation(); onSelect(e); }}
       onMouseDown={onMoveStart}
     >
-      {/* ★ NEW: 전환 오버레이 — 클립 끝 (이 클립이 from) */}
-      {transitionAsA && (
-        <div style={{
-          position: 'absolute',
-          top: 0,
-          right: 0,
-          width: Math.min(transitionAsA.duration * pps, width * 0.5),
-          height: '100%',
-          background: `linear-gradient(to right, transparent, ${TRANSITION_OVERLAY_COLOR})`,
-          borderRadius: `0 ${CLIP_BORDER_RADIUS}px ${CLIP_BORDER_RADIUS}px 0`,
-          pointerEvents: 'none',
-          zIndex: 4,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>
-          <span style={{ fontSize: 12, opacity: 0.8 }}>
-            {TRANSITION_ICON_MAP[transitionAsA.type] ?? '🔀'}
-          </span>
-        </div>
-      )}
-
-      {/* ★ NEW: 전환 오버레이 — 클립 시작 (이 클립이 to) */}
-      {transitionAsB && (
-        <div style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: Math.min(transitionAsB.duration * pps, width * 0.5),
-          height: '100%',
-          background: `linear-gradient(to left, transparent, ${TRANSITION_OVERLAY_COLOR})`,
-          borderRadius: `${CLIP_BORDER_RADIUS}px 0 0 ${CLIP_BORDER_RADIUS}px`,
-          pointerEvents: 'none',
-          zIndex: 4,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>
-          <span style={{ fontSize: 12, opacity: 0.8 }}>
-            {TRANSITION_ICON_MAP[transitionAsB.type] ?? '🔀'}
-          </span>
-        </div>
-      )}
-
       {/* Linked Indicator */}
       {clip.linkedClipId && (
         <div style={{
