@@ -67,12 +67,8 @@ export interface MediaSliceState {
 
 // ── 슬라이스 액션 인터페이스 ──
 export interface MediaSliceActions {
-  // 메타데이터
   setAssetMeta: (assetId: string, meta: AssetMetadata) => void;
-  getOrCreateMeta: (
-    assetId: string,
-    assetType: 'video' | 'audio' | 'image',
-  ) => AssetMetadata;
+  getOrCreateMeta: (assetId: string, assetType: 'video' | 'audio' | 'image') => AssetMetadata;
   toggleFavorite: (assetId: string) => void;
   incrementUsage: (assetId: string) => void;
   addTag: (assetId: string, tag: AITag) => void;
@@ -80,26 +76,11 @@ export interface MediaSliceActions {
   batchAddTag: (assetIds: readonly string[], tag: AITag) => void;
   batchRemoveTag: (assetIds: readonly string[], label: string) => void;
   setAssetTags: (assetId: string, tags: readonly AITag[]) => void;
-
-  // 스마트 컬렉션
-  addCollection: (
-    name: string,
-    icon: string,
-    rules: readonly SmartRule[],
-  ) => SmartCollection;
-  updateCollection: (
-    id: string,
-    updates: Partial<Pick<SmartCollection, 'name' | 'icon' | 'rules'>>,
-  ) => void;
+  addCollection: (name: string, icon: string, rules: readonly SmartRule[]) => SmartCollection;
+  updateCollection: (id: string, updates: Partial<Pick<SmartCollection, 'name' | 'icon' | 'rules'>>) => void;
   removeCollection: (id: string) => void;
-
-  // 프리셋 팩
-  addPresetPack: (
-    pack: Omit<MediaPresetPack, 'id'>,
-  ) => MediaPresetPack;
+  addPresetPack: (pack: Omit<MediaPresetPack, 'id'>) => MediaPresetPack;
   removePresetPack: (id: string) => void;
-
-  // 뷰 상태
   setMediaViewMode: (mode: MediaViewMode) => void;
   setMediaSortField: (field: MediaSortField) => void;
   toggleMediaSortDirection: () => void;
@@ -121,26 +102,25 @@ export const MEDIA_INITIAL_STATE: MediaSliceState = {
   mediaView: DEFAULT_VIEW_STATE,
 };
 
-// ── 슬라이스 생성 함수 ──
-// Zustand set/get을 받아 액션을 반환
-type SetFn = (
-  partial:
-    | Partial<MediaSliceState>
-    | ((state: MediaSliceState) => Partial<MediaSliceState>),
+/* ── I-1 FIX: 제네릭 타입 시그니처 ──
+ * 호스트 스토어의 전체 타입 <T>를 제네릭으로 받아
+ * set/get 시 MediaSliceState 부분만 읽고 쓰도록 제한.
+ * 호출부에서 as any 없이 사용 가능.
+ */
+type SetFn<T extends MediaSliceState> = (
+  partial: Partial<T> | ((state: T) => Partial<T>),
 ) => void;
-type GetFn = () => MediaSliceState;
+type GetFn<T extends MediaSliceState> = () => T;
 
-export function createMediaSlice(
-  set: SetFn,
-  get: GetFn,
+export function createMediaSlice<T extends MediaSliceState>(
+  set: SetFn<T>,
+  get: GetFn<T>,
 ): MediaSliceActions {
   return {
-    // ── 메타데이터 관리 ──
-
     setAssetMeta: (assetId, meta) =>
       set((s) => ({
         assetMeta: new Map(s.assetMeta).set(assetId, meta),
-      })),
+      } as Partial<T>)),
 
     getOrCreateMeta: (assetId, assetType) => {
       const existing = get().assetMeta.get(assetId);
@@ -148,60 +128,50 @@ export function createMediaSlice(
       const meta = createDefaultMeta(assetId, assetType);
       set((s) => ({
         assetMeta: new Map(s.assetMeta).set(assetId, meta),
-      }));
+      } as Partial<T>));
       return meta;
     },
 
     toggleFavorite: (assetId) =>
       set((s) => {
         const current = s.assetMeta.get(assetId);
-        if (current === undefined) return {};
-        const updated: AssetMetadata = {
-          ...current,
-          favorite: !current.favorite,
-        };
-        return { assetMeta: new Map(s.assetMeta).set(assetId, updated) };
+        if (current === undefined) return {} as Partial<T>;
+        const updated: AssetMetadata = { ...current, favorite: !current.favorite };
+        return { assetMeta: new Map(s.assetMeta).set(assetId, updated) } as Partial<T>;
       }),
 
     incrementUsage: (assetId) =>
       set((s) => {
         const current = s.assetMeta.get(assetId);
-        if (current === undefined) return {};
+        if (current === undefined) return {} as Partial<T>;
         const updated: AssetMetadata = {
           ...current,
           usageCount: current.usageCount + 1,
           lastUsed: Date.now(),
         };
-        return { assetMeta: new Map(s.assetMeta).set(assetId, updated) };
+        return { assetMeta: new Map(s.assetMeta).set(assetId, updated) } as Partial<T>;
       }),
 
     addTag: (assetId, tag) =>
       set((s) => {
         const current = s.assetMeta.get(assetId);
-        if (current === undefined) return {};
-        const exists = current.tags.some(
-          t => t.label.toLowerCase() === tag.label.toLowerCase(),
-        );
-        if (exists) return {};
-        const updated: AssetMetadata = {
-          ...current,
-          tags: [...current.tags, tag],
-        };
-        return { assetMeta: new Map(s.assetMeta).set(assetId, updated) };
+        if (current === undefined) return {} as Partial<T>;
+        const exists = current.tags.some(t => t.label.toLowerCase() === tag.label.toLowerCase());
+        if (exists) return {} as Partial<T>;
+        const updated: AssetMetadata = { ...current, tags: [...current.tags, tag] };
+        return { assetMeta: new Map(s.assetMeta).set(assetId, updated) } as Partial<T>;
       }),
 
     removeTag: (assetId, label) =>
       set((s) => {
         const current = s.assetMeta.get(assetId);
-        if (current === undefined) return {};
+        if (current === undefined) return {} as Partial<T>;
         const lower = label.toLowerCase();
         const updated: AssetMetadata = {
           ...current,
-          tags: current.tags.filter(
-            t => t.label.toLowerCase() !== lower,
-          ),
+          tags: current.tags.filter(t => t.label.toLowerCase() !== lower),
         };
-        return { assetMeta: new Map(s.assetMeta).set(assetId, updated) };
+        return { assetMeta: new Map(s.assetMeta).set(assetId, updated) } as Partial<T>;
       }),
 
     batchAddTag: (assetIds, tag) =>
@@ -210,13 +180,11 @@ export function createMediaSlice(
         for (const id of assetIds) {
           const current = next.get(id);
           if (current === undefined) continue;
-          const exists = current.tags.some(
-            t => t.label.toLowerCase() === tag.label.toLowerCase(),
-          );
+          const exists = current.tags.some(t => t.label.toLowerCase() === tag.label.toLowerCase());
           if (exists) continue;
           next.set(id, { ...current, tags: [...current.tags, tag] });
         }
-        return { assetMeta: next };
+        return { assetMeta: next } as Partial<T>;
       }),
 
     batchRemoveTag: (assetIds, label) =>
@@ -226,25 +194,18 @@ export function createMediaSlice(
         for (const id of assetIds) {
           const current = next.get(id);
           if (current === undefined) continue;
-          next.set(id, {
-            ...current,
-            tags: current.tags.filter(
-              t => t.label.toLowerCase() !== lower,
-            ),
-          });
+          next.set(id, { ...current, tags: current.tags.filter(t => t.label.toLowerCase() !== lower) });
         }
-        return { assetMeta: next };
+        return { assetMeta: next } as Partial<T>;
       }),
 
     setAssetTags: (assetId, tags) =>
       set((s) => {
         const current = s.assetMeta.get(assetId);
-        if (current === undefined) return {};
+        if (current === undefined) return {} as Partial<T>;
         const updated: AssetMetadata = { ...current, tags: [...tags] };
-        return { assetMeta: new Map(s.assetMeta).set(assetId, updated) };
+        return { assetMeta: new Map(s.assetMeta).set(assetId, updated) } as Partial<T>;
       }),
-
-    // ── 스마트 컬렉션 ──
 
     addCollection: (name, icon, rules) => {
       const collection: SmartCollection = {
@@ -254,9 +215,7 @@ export function createMediaSlice(
         rules: [...rules],
         isSystem: false,
       };
-      set((s) => ({
-        collections: [...s.collections, collection],
-      }));
+      set((s) => ({ collections: [...s.collections, collection] } as Partial<T>));
       return collection;
     },
 
@@ -266,28 +225,19 @@ export function createMediaSlice(
           if (c.id !== id || c.isSystem) return c;
           return { ...c, ...updates };
         }),
-      })),
+      } as Partial<T>)),
 
     removeCollection: (id) =>
       set((s) => ({
-        collections: s.collections.filter(
-          c => c.id !== id || c.isSystem,
-        ),
+        collections: s.collections.filter(c => c.id !== id || c.isSystem),
         mediaView: s.mediaView.activeCollection === id
           ? { ...s.mediaView, activeCollection: 'sc-all' }
           : s.mediaView,
-      })),
-
-    // ── 프리셋 팩 ──
+      } as Partial<T>)),
 
     addPresetPack: (packData) => {
-      const pack: MediaPresetPack = {
-        ...packData,
-        id: mediaUid('pp'),
-      };
-      set((s) => ({
-        presetPacks: [...s.presetPacks, pack],
-      }));
+      const pack: MediaPresetPack = { ...packData, id: mediaUid('pp') };
+      set((s) => ({ presetPacks: [...s.presetPacks, pack] } as Partial<T>));
       return pack;
     },
 
@@ -297,19 +247,13 @@ export function createMediaSlice(
         mediaView: s.mediaView.activePresetPack === id
           ? { ...s.mediaView, activePresetPack: null }
           : s.mediaView,
-      })),
-
-    // ── 뷰 상태 ──
+      } as Partial<T>)),
 
     setMediaViewMode: (mode) =>
-      set((s) => ({
-        mediaView: { ...s.mediaView, viewMode: mode },
-      })),
+      set((s) => ({ mediaView: { ...s.mediaView, viewMode: mode } } as Partial<T>)),
 
     setMediaSortField: (field) =>
-      set((s) => ({
-        mediaView: { ...s.mediaView, sortField: field },
-      })),
+      set((s) => ({ mediaView: { ...s.mediaView, sortField: field } } as Partial<T>)),
 
     toggleMediaSortDirection: () =>
       set((s) => ({
@@ -317,31 +261,21 @@ export function createMediaSlice(
           ...s.mediaView,
           sortDirection: s.mediaView.sortDirection === 'asc' ? 'desc' : 'asc',
         },
-      })),
+      } as Partial<T>)),
 
     setMediaFilterType: (type) =>
-      set((s) => ({
-        mediaView: { ...s.mediaView, filterType: type },
-      })),
+      set((s) => ({ mediaView: { ...s.mediaView, filterType: type } } as Partial<T>)),
 
     setMediaFilterSource: (source) =>
-      set((s) => ({
-        mediaView: { ...s.mediaView, filterSource: source },
-      })),
+      set((s) => ({ mediaView: { ...s.mediaView, filterSource: source } } as Partial<T>)),
 
     setMediaSearchQuery: (query) =>
-      set((s) => ({
-        mediaView: { ...s.mediaView, searchQuery: query },
-      })),
+      set((s) => ({ mediaView: { ...s.mediaView, searchQuery: query } } as Partial<T>)),
 
     setActiveCollection: (id) =>
-      set((s) => ({
-        mediaView: { ...s.mediaView, activeCollection: id },
-      })),
+      set((s) => ({ mediaView: { ...s.mediaView, activeCollection: id } } as Partial<T>)),
 
     setActivePresetPack: (id) =>
-      set((s) => ({
-        mediaView: { ...s.mediaView, activePresetPack: id },
-      })),
+      set((s) => ({ mediaView: { ...s.mediaView, activePresetPack: id } } as Partial<T>)),
   };
 }

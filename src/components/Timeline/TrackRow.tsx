@@ -9,7 +9,9 @@ interface TrackRowProps {
   assets: Asset[];
   pps: number;
   selectedClipId: string | null;
-  onSelectClip: (id: string) => void;
+  /* I-2 FIX: 멀티 셀렉션 지원 */
+  selectedClipIds: Set<string>;
+  onSelectClip: (id: string, e?: React.MouseEvent) => void;
   onMoveClip: (e: React.MouseEvent, clipId: string) => void;
   onTrimLeft: (e: React.MouseEvent, clipId: string) => void;
   onTrimRight: (e: React.MouseEvent, clipId: string) => void;
@@ -17,16 +19,13 @@ interface TrackRowProps {
   onDragOver: (e: React.DragEvent) => void;
 }
 
-/* B4 FIX + B5 FIX: forwardRef 적용, pointerEvents 제거(locked 트랙도 drop 가능) */
 export const TrackRow = forwardRef<HTMLDivElement, TrackRowProps>(({
-  track, assets, pps, selectedClipId,
+  track, assets, pps, selectedClipId, selectedClipIds,
   onSelectClip, onMoveClip, onTrimLeft, onTrimRight,
   onDrop, onDragOver,
 }, ref) => {
   const store = useEditorStore();
   const trackColor = track.color || '#4A90D9';
-
-  /* Solo로 인한 실효 mute 계산 */
   const effectiveMuted = store.getEffectiveMuted(track.id);
 
   return (
@@ -38,7 +37,6 @@ export const TrackRow = forwardRef<HTMLDivElement, TrackRowProps>(({
         boxSizing: 'border-box',
         borderBottom: '1px solid var(--border-secondary, #333)',
         opacity: track.visible ? 1 : 0.3,
-        /* B4 FIX: pointerEvents 제거 — locked 트랙에서도 드래그 오버/드롭 이벤트 수신 */
         borderLeft: `3px solid ${trackColor}`,
         background: effectiveMuted && !track.muted
           ? 'rgba(255,100,100,.04)'
@@ -47,7 +45,7 @@ export const TrackRow = forwardRef<HTMLDivElement, TrackRowProps>(({
       onDrop={onDrop}
       onDragOver={onDragOver}
     >
-      {/* 잠금 오버레이 — 시각적으로만 잠금 표시, 이벤트 통과 */}
+      {/* 잠금 오버레이 */}
       {track.locked && (
         <div style={{
           position: 'absolute',
@@ -77,18 +75,19 @@ export const TrackRow = forwardRef<HTMLDivElement, TrackRowProps>(({
 
       {track.clips.map(clip => {
         const asset = assets.find(a => a.id === clip.assetId);
+        /* I-2 FIX: 멀티 셀렉션 하이라이트 */
+        const isSelected = clip.id === selectedClipId || selectedClipIds.has(clip.id);
         return (
           <ClipBlock
             key={clip.id}
             clip={clip}
             track={track}
             assetName={asset?.name ?? 'Unknown'}
-            isSelected={clip.id === selectedClipId}
+            isSelected={isSelected}
             pps={pps}
             trackHeight={track.height}
-            onSelect={() => onSelectClip(clip.id)}
+            onSelect={(e) => onSelectClip(clip.id, e)}
             onMoveStart={(e) => {
-              /* 잠긴 트랙의 클립은 이동 방지 */
               if (track.locked) return;
               onMoveClip(e, clip.id);
             }}

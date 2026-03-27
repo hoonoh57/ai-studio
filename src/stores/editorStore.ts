@@ -163,6 +163,29 @@ function nextTrackName(tracks: Track[], type: TrackType): string {
   return `${prefix} ${maxNum + 1}`;
 }
 
+/* ── I-3 FIX: 클립-트랙 타입 호환성 테이블 ──
+ * video 클립은 video/effect 트랙에, audio 클립은 audio 트랙에,
+ * text 클립은 text 트랙에, effect 클립은 effect/video 트랙에 허용.
+ */
+const TRACK_TYPE_COMPAT: Record<TrackType, readonly TrackType[]> = {
+  video:  ['video', 'effect'],
+  audio:  ['audio'],
+  text:   ['text'],
+  effect: ['effect', 'video'],
+};
+
+function isClipCompatibleWithTrack(
+  clipAssetId: string,
+  fromTrack: Track,
+  toTrack: Track,
+): boolean {
+  /* 같은 타입이면 항상 호환 */
+  if (fromTrack.type === toTrack.type) return true;
+  /* 출발 트랙 타입 기준으로 호환 목록 체크 */
+  const allowed = TRACK_TYPE_COMPAT[fromTrack.type];
+  return allowed ? allowed.includes(toTrack.type) : false;
+}
+
 export const useEditorStore = create<StoreType>((set, get) => ({
   /* ──── 프로젝트 ──── */
   project: defaultProject,
@@ -435,9 +458,22 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     }));
   },
 
-  /* ── B5 FIX: 클립 트랙 간 이동 ── */
+  /* ── I-3 FIX: 클립 트랙 간 이동 — 타입 호환성 검증 추가 ── */
   moveClipToTrack: (clipId, fromTrackId, toTrackId) => {
     if (fromTrackId === toTrackId) return;
+    const s = get();
+    const fromTrack = s.project.tracks.find(t => t.id === fromTrackId);
+    const toTrack = s.project.tracks.find(t => t.id === toTrackId);
+    if (!fromTrack || !toTrack) return;
+
+    /* 타입 호환성 체크 */
+    if (!isClipCompatibleWithTrack(clipId, fromTrack, toTrack)) {
+      console.warn(
+        `[moveClipToTrack] 호환 불가: ${fromTrack.type} 트랙의 클립을 ${toTrack.type} 트랙으로 이동할 수 없습니다.`,
+      );
+      return;
+    }
+
     set((s) => {
       let movedClip: Clip | undefined;
       const tracksAfterRemove = s.project.tracks.map(t => {
@@ -471,8 +507,6 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   markers: [],
   addMarker: (m) => set((s) => ({ markers: [...s.markers, m] })),
   removeMarker: (id) => set((s) => ({ markers: s.markers.filter(m => m.id !== id) })),
-
-  /* ── B1 FIX: updateMarker 추가 ── */
   updateMarker: (id, patch) => set((s) => ({
     markers: s.markers.map(m => m.id === id ? { ...m, ...patch } : m),
   })),
@@ -490,7 +524,6 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   thumbnailCache: new Map(),
   setWaveform: (id, data) => set((s) => ({ waveformCache: new Map(s.waveformCache).set(id, data) })),
   setThumbnail: (id, data) => set((s) => ({ thumbnailCache: new Map(s.thumbnailCache).set(id, data) })),
-  /* B6 FIX: 별칭 추가 — 외부에서 cacheWaveform/cacheThumbnail 호출 시 호환 */
   cacheWaveform: (id, data) => set((s) => ({ waveformCache: new Map(s.waveformCache).set(id, data) })),
   cacheThumbnail: (id, data) => set((s) => ({ thumbnailCache: new Map(s.thumbnailCache).set(id, data) })),
 
@@ -556,7 +589,7 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   canRedo: () => get().redoStack.length > 0,
   getSkillConfig: () => SKILL_CONFIGS[get().skillLevel] || SKILL_CONFIGS.beginner,
 
-  /* ──── 미디어 슬라이스 연동 ──── */
+  /* ── I-1 FIX: as any 제거 — createMediaSlice가 제네릭 <T extends MediaSliceState>이므로 타입 안전 ── */
   ...MEDIA_INITIAL_STATE,
-  ...createMediaSlice(set as any, get as any),
+  ...createMediaSlice(set, get),
 }));

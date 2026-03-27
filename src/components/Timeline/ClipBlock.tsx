@@ -12,7 +12,8 @@ interface ClipBlockProps {
   isSelected: boolean;
   pps: number;
   trackHeight: number;
-  onSelect: () => void;
+  /* I-2 FIX: 이벤트 객체 전달 → Shift 키 감지 가능 */
+  onSelect: (e: React.MouseEvent) => void;
   onMoveStart: (e: React.MouseEvent) => void;
   onTrimLeftStart: (e: React.MouseEvent) => void;
   onTrimRightStart: (e: React.MouseEvent) => void;
@@ -29,6 +30,9 @@ const NORMAL_BORDER = '1px solid rgba(255,255,255,0.15)';
 const THUMBNAIL_HEIGHT_RATIO = 0.65;
 const WAVEFORM_HEIGHT_RATIO = 0.35;
 const VISUALIZATION_DIVIDER = '1px solid rgba(255,255,255,0.1)';
+
+/* I-2 FIX: 멀티 셀렉션 시 보조 하이라이트 */
+const MULTI_SELECTED_BORDER = '2px solid rgba(108, 92, 231, 0.8)';
 
 const handleBase: React.CSSProperties = {
   width: HANDLE_WIDTH,
@@ -56,14 +60,17 @@ export function ClipBlock({
   const clipHeight = trackHeight - (CLIP_PADDING_TOP * 2);
 
   const config = useEditorStore((s) => s.getSkillConfig());
+  const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const thumbnailCache = useEditorStore((s) => s.thumbnailCache);
   const waveformCache = useEditorStore((s) => s.waveformCache);
 
   const thumbnailData = thumbnailCache.get(clip.assetId) ?? null;
   const waveformData = waveformCache.get(clip.assetId) ?? null;
 
-  const bgColor = isSelected ? 'var(--accent-hover)' : track.color;
-  const border = isSelected ? SELECTED_BORDER : NORMAL_BORDER;
+  /* I-2 FIX: primary(단일 선택) vs secondary(멀티 셀렉션 일부) 구분 */
+  const isPrimary = clip.id === selectedClipId;
+  const bgColor = isPrimary ? 'var(--accent-hover)' : (isSelected ? 'var(--accent, #6c5ce7)' : track.color);
+  const border = isPrimary ? SELECTED_BORDER : (isSelected ? MULTI_SELECTED_BORDER : NORMAL_BORDER);
 
   const showThumbStrip = track.type === 'video' && thumbnailData !== null;
   const showWave = (track.type === 'audio' || track.type === 'video') && waveformData !== null;
@@ -96,10 +103,10 @@ export function ClipBlock({
         boxSizing: 'border-box',
         zIndex: isSelected ? 20 : 1,
       }}
-      onClick={(e) => { e.stopPropagation(); onSelect(); }}
+      onClick={(e) => { e.stopPropagation(); onSelect(e); }}
       onMouseDown={onMoveStart}
     >
-      {/* Phase T-2: Linked Indicator */}
+      {/* Linked Indicator */}
       {clip.linkedClipId && (
         <div style={{
           position: 'absolute',
