@@ -51,6 +51,10 @@ const styles = {
     background: 'var(--accent)',
     color: '#fff',
   } as React.CSSProperties,
+  toolBtnDisabled: {
+    opacity: 0.3,
+    cursor: 'default',
+  } as React.CSSProperties,
   select: {
     background: 'var(--bg-primary)',
     border: '1px solid var(--border)',
@@ -72,6 +76,12 @@ const styles = {
     fontSize: FONT_SIZE_ZOOM_LABEL,
     color: 'var(--text-muted)',
   } as React.CSSProperties,
+  separator: {
+    width: 1,
+    height: 18,
+    background: 'var(--border)',
+    flexShrink: 0,
+  } as React.CSSProperties,
 } as const;
 
 export function TimelineToolbar(): React.ReactElement {
@@ -88,6 +98,12 @@ export function TimelineToolbar(): React.ReactElement {
   const skillLevel = useEditorStore((s) => s.skillLevel);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const splitClip = useEditorStore((s) => s.splitClip);
+
+  // 버그#5: undo/redo
+  const undo = useEditorStore((s) => s.undo);
+  const redo = useEditorStore((s) => s.redo);
+  const undoStack = useEditorStore((s) => s.undoStack);
+  const redoStack = useEditorStore((s) => s.redoStack);
 
   const config = SKILL_CONFIGS[skillLevel];
   const isExpert = skillLevel === 'expert';
@@ -151,6 +167,32 @@ export function TimelineToolbar(): React.ReactElement {
 
   return (
     <div style={styles.toolbar}>
+      {/* 버그#5: Undo/Redo 버튼 */}
+      <button
+        style={{
+          ...styles.toolBtn,
+          ...(undoStack.length === 0 ? styles.toolBtnDisabled : {}),
+        }}
+        onClick={undo}
+        disabled={undoStack.length === 0}
+        title="Undo (Ctrl+Z)"
+      >
+        ↩ Undo
+      </button>
+      <button
+        style={{
+          ...styles.toolBtn,
+          ...(redoStack.length === 0 ? styles.toolBtnDisabled : {}),
+        }}
+        onClick={redo}
+        disabled={redoStack.length === 0}
+        title="Redo (Ctrl+Shift+Z)"
+      >
+        ↪ Redo
+      </button>
+
+      <div style={styles.separator} />
+
       {showAdvancedTrim && (
         <select
           style={styles.select}
@@ -199,7 +241,7 @@ export function TimelineToolbar(): React.ReactElement {
         }}
         onClick={toggleSnap}
       >
-        🧲 Snap
+         Snap
       </button>
 
       <button
@@ -207,7 +249,7 @@ export function TimelineToolbar(): React.ReactElement {
         title="Split (C)"
         onClick={handleSplit}
       >
-        ✂ Split
+         Split
       </button>
 
       <span style={styles.spacer} />

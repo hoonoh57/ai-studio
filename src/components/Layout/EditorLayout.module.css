@@ -55,11 +55,12 @@
 
 /* ── Beginner View ── */
 
+/* 버그#2 수정: justifyContent → justify-content */
 .beginnerMain {
   flex: 1;
   display: flex;
   align-items: center;
-  justifyContent: 'center';
+  justify-content: center;
   background: var(--bg-primary);
   padding: 40px;
 }

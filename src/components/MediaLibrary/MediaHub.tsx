@@ -43,7 +43,6 @@ const NAME_FONT_SIZE = 11;
 const META_FONT_SIZE = 9;
 const TAG_FONT_SIZE = 9;
 const TAG_MAX_VISIBLE = 2;
-const FAV_ICON_SIZE = 14;
 const LIST_ROW_HEIGHT = 36;
 const EMPTY_FONT_SIZE = 12;
 const SECTION_PADDING = 8;
@@ -292,6 +291,23 @@ const S: Record<string, React.CSSProperties> = {
     transition: 'opacity 0.15s, background 0.15s',
     opacity: 0.7,
   },
+  // 버그#6: 삭제 버튼 스타일
+  deleteBtn: {
+    width: 28,
+    height: 28,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: 14,
+    flexShrink: 0,
+    borderRadius: 4,
+    transition: 'opacity 0.15s, background 0.15s',
+    opacity: 0.5,
+    color: 'var(--danger)',
+  },
 
   /* ── 리스트 뷰 ── */
   listRow: {
@@ -320,6 +336,15 @@ const S: Record<string, React.CSSProperties> = {
     border: 'none',
     flexShrink: 0,
     opacity: 0.6,
+  },
+  listDelete: {
+    fontSize: 12,
+    cursor: 'pointer',
+    background: 'transparent',
+    border: 'none',
+    flexShrink: 0,
+    opacity: 0.4,
+    color: 'var(--danger)',
   },
 
   /* ── 빈 상태 ── */
@@ -565,6 +590,7 @@ interface AssetCardItemProps {
   readonly onDragStart: (id: string, e: React.DragEvent) => void;
   readonly onSelect: (id: string) => void;
   readonly onToggleFav: (id: string) => void;
+  readonly onDelete: (id: string) => void;
 }
 
 function AssetCardItem(props: AssetCardItemProps): React.ReactElement {
@@ -600,7 +626,7 @@ function AssetCardItem(props: AssetCardItemProps): React.ReactElement {
           </div>
         )}
       </div>
-      {/* 즐겨찾기 버튼 — flex 행의 마지막 요소로 배치 */}
+      {/* 즐겨찾기 버튼 */}
       <button
         style={S.favBtn}
         onClick={e => { e.stopPropagation(); props.onToggleFav(asset.id); }}
@@ -609,6 +635,16 @@ function AssetCardItem(props: AssetCardItemProps): React.ReactElement {
         title="즐겨찾기"
       >
         {meta?.favorite ? '⭐' : '☆'}
+      </button>
+      {/* 버그#6: 삭제 버튼 */}
+      <button
+        style={S.deleteBtn}
+        onClick={e => { e.stopPropagation(); props.onDelete(asset.id); }}
+        onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'rgba(255,80,80,0.12)'; }}
+        onMouseLeave={e => { e.currentTarget.style.opacity = '0.5'; e.currentTarget.style.background = 'transparent'; }}
+        title="삭제"
+      >
+        🗑️
       </button>
     </div>
   );
@@ -623,6 +659,7 @@ interface AssetListItemProps {
   readonly meta: AssetMetadata | undefined;
   readonly onDragStart: (id: string, e: React.DragEvent) => void;
   readonly onToggleFav: (id: string) => void;
+  readonly onDelete: (id: string) => void;
 }
 
 function AssetListItem(props: AssetListItemProps): React.ReactElement {
@@ -646,6 +683,16 @@ function AssetListItem(props: AssetListItemProps): React.ReactElement {
       >
         {meta?.favorite ? '★' : '☆'}
       </button>
+      {/* 버그#6: 삭제 버튼 */}
+      <button
+        style={S.listDelete}
+        onClick={e => { e.stopPropagation(); props.onDelete(asset.id); }}
+        onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
+        onMouseLeave={e => { e.currentTarget.style.opacity = '0.4'; }}
+        title="삭제"
+      >
+        ✕
+      </button>
     </div>
   );
 }
@@ -668,6 +715,7 @@ export function MediaHub(): React.ReactElement {
   const skillLevel = useEditorStore(s => s.skillLevel);
 
   const addAsset = useEditorStore(s => s.addAsset);
+  const removeAsset = useEditorStore(s => s.removeAsset);
   const setAssetTags = useEditorStore(s => s.setAssetTags);
   const toggleFavorite = useEditorStore(s => s.toggleFavorite);
   const setMediaSearchQuery = useEditorStore(s => s.setMediaSearchQuery);
@@ -718,7 +766,6 @@ export function MediaHub(): React.ReactElement {
         height: meta.height,
         fileSize: file.size,
       });
-      // 백그라운드 AI 태깅 (비동기, non-blocking)
       autoTagAsset({
         name: newAsset.name,
         type: newAsset.type,
@@ -739,6 +786,21 @@ export function MediaHub(): React.ReactElement {
       e.target.value = '';
     }
   }, [processFiles]);
+
+  // ── 버그#6: 에셋 삭제 핸들러 (확인 대화 상자 포함) ──
+  const handleDeleteAsset = useCallback((assetId: string) => {
+    const asset = assets.find(a => a.id === assetId);
+    const name = asset?.name ?? 'this asset';
+    const confirmed = window.confirm(`"${name}" 파일을 미디어 패널에서 제거하시겠습니까?\n\n타임라인에서 사용 중인 클립도 함께 제거됩니다.`);
+    if (!confirmed) return;
+
+    useEditorStore.getState().pushUndo('Remove asset');
+    removeAsset(assetId);
+
+    if (selectedAssetId === assetId) {
+      setSelectedAssetId(null);
+    }
+  }, [assets, removeAsset, selectedAssetId]);
 
   // ── 드래그 & 드롭 ──
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -864,6 +926,7 @@ export function MediaHub(): React.ReactElement {
               meta={assetMeta.get(asset.id)}
               onDragStart={handleDragStart}
               onToggleFav={toggleFavorite}
+              onDelete={handleDeleteAsset}
             />
           ))
         ) : (
@@ -879,6 +942,7 @@ export function MediaHub(): React.ReactElement {
                 onDragStart={handleDragStart}
                 onSelect={setSelectedAssetId}
                 onToggleFav={toggleFavorite}
+                onDelete={handleDeleteAsset}
               />
             ))}
           </div>

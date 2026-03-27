@@ -32,6 +32,15 @@ interface DragState {
   readonly origSourceEnd: number;
 }
 
+// ── 버그#4 헬퍼: 클립이 locked 트랙에 있는지 확인 ──
+function isClipOnLockedTrack(clipId: string, tracks: readonly Track[]): boolean {
+  for (const t of tracks) {
+    const found = t.clips.find((c) => c.id === clipId);
+    if (found !== undefined) return t.locked;
+  }
+  return false;
+}
+
 export function TimelinePanel(): React.ReactElement {
   const project = useEditorStore((s) => s.project);
   const zoom = useEditorStore((s) => s.zoom);
@@ -113,6 +122,11 @@ export function TimelinePanel(): React.ReactElement {
       e.stopPropagation();
       selectClip(clip.id);
 
+      // 버그#5: 드래그 시작 시 undo 포인트 저장
+      useEditorStore.getState().pushUndo(
+        type === 'move' ? 'Move clip' : 'Trim clip',
+      );
+
       dragRef.current = {
         type,
         clipId: clip.id,
@@ -188,6 +202,36 @@ export function TimelinePanel(): React.ReactElement {
       const state = useEditorStore.getState();
       const step = 1 / (state.project.fps || 30);
 
+      // ── 버그#5: Undo/Redo 단축키 (Ctrl+Z / Ctrl+Shift+Z) ──
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        state.undo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'Z' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        state.redo();
+        return;
+      }
+      // Ctrl+Y도 redo로
+      if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+        e.preventDefault();
+        state.redo();
+        return;
+      }
+
+      // ── Delete 키: 선택된 클립 삭제 ──
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (state.selectedClipId !== null) {
+          // 버그#4: locked 트랙 클립은 삭제 불가
+          if (!isClipOnLockedTrack(state.selectedClipId, state.project.tracks)) {
+            e.preventDefault();
+            state.removeClip(state.selectedClipId);
+          }
+        }
+        return;
+      }
+
       switch (e.key) {
         case ' ':
           e.preventDefault();
@@ -224,8 +268,11 @@ export function TimelinePanel(): React.ReactElement {
           break;
         case 'c':
         case 'C':
+          // 버그#4: locked 트랙의 클립은 split 불가
           if (state.selectedClipId !== null) {
-            state.splitClip(state.selectedClipId, state.currentTime);
+            if (!isClipOnLockedTrack(state.selectedClipId, state.project.tracks)) {
+              state.splitClip(state.selectedClipId, state.currentTime);
+            }
           }
           break;
         case 'm':

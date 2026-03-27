@@ -30,7 +30,15 @@ import {
 let uidCounter = 0;
 const uid = (prefix: string) => `${prefix}_${Date.now()}_${++uidCounter}`;
 
-// ── 기존 에디터 상태 (변경 없음) ──
+// ── Undo/Redo 히스토리 (버그#5 수정) ──
+const MAX_HISTORY = 50;
+
+interface HistoryEntry {
+  readonly project: Project;
+  readonly label: string;
+}
+
+// ── 기존 에디터 상태 ──
 interface EditorCoreState {
   project: Project;
   currentTime: number;
@@ -50,6 +58,9 @@ interface EditorCoreState {
   skillLevel: SkillLevel;
   activeTab: EditorTab;
   activePanel: PanelId;
+  // 버그#5: undo/redo 상태
+  undoStack: HistoryEntry[];
+  redoStack: HistoryEntry[];
 }
 
 interface EditorCoreActions {
@@ -93,6 +104,12 @@ interface EditorCoreActions {
   setActivePanel: (panel: PanelId) => void;
   getSkillConfig: () => SkillConfig;
   exportProject: () => string;
+  // 버그#5: undo/redo 액션
+  pushUndo: (label: string) => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
 }
 
 // ── 통합 스토어 타입: 기존 + 미디어 슬라이스 ──
@@ -130,7 +147,7 @@ export const useEditorStore = create<EditorState>()(
   subscribeWithSelector((set, get) => ({
 
     // ══════════════════════════════════════
-    //  기존 에디터 상태 (변경 없음)
+    //  기존 에디터 상태
     // ══════════════════════════════════════
 
     project: defaultProject,
@@ -151,6 +168,10 @@ export const useEditorStore = create<EditorState>()(
     skillLevel: 'intermediate' as SkillLevel,
     activeTab: 'edit' as EditorTab,
     activePanel: 'media' as PanelId,
+
+    // 버그#5: undo/redo 초기 상태
+    undoStack: [],
+    redoStack: [],
 
     // ══════════════════════════════════════
     //  미디어 슬라이스 초기 상태
@@ -174,7 +195,64 @@ export const useEditorStore = create<EditorState>()(
     ),
 
     // ══════════════════════════════════════
-    //  기존 에디터 액션 (변경 없음)
+    //  버그#5: Undo/Redo 액션
+    // ══════════════════════════════════════
+
+    pushUndo: (label) => {
+      const state = get();
+      const entry: HistoryEntry = {
+        project: JSON.parse(JSON.stringify(state.project)),
+        label,
+      };
+      set((s) => ({
+        undoStack: [...s.undoStack.slice(-MAX_HISTORY + 1), entry],
+        redoStack: [], // 새로운 액션 시 redo 스택 초기화
+      }));
+    },
+
+    undo: () => {
+      const state = get();
+      if (state.undoStack.length === 0) return;
+
+      const prev = state.undoStack[state.undoStack.length - 1];
+      const currentEntry: HistoryEntry = {
+        project: JSON.parse(JSON.stringify(state.project)),
+        label: prev.label,
+      };
+
+      set({
+        project: prev.project,
+        undoStack: state.undoStack.slice(0, -1),
+        redoStack: [...state.redoStack, currentEntry],
+        selectedClipId: null,
+        selectedClipIds: [],
+      });
+    },
+
+    redo: () => {
+      const state = get();
+      if (state.redoStack.length === 0) return;
+
+      const next = state.redoStack[state.redoStack.length - 1];
+      const currentEntry: HistoryEntry = {
+        project: JSON.parse(JSON.stringify(state.project)),
+        label: next.label,
+      };
+
+      set({
+        project: next.project,
+        redoStack: state.redoStack.slice(0, -1),
+        undoStack: [...state.undoStack, currentEntry],
+        selectedClipId: null,
+        selectedClipIds: [],
+      });
+    },
+
+    canUndo: () => get().undoStack.length > 0,
+    canRedo: () => get().redoStack.length > 0,
+
+    // ══════════════════════════════════════
+    //  기존 에디터 액션
     // ══════════════════════════════════════
 
     setProjectName: (name) =>
@@ -199,8 +277,11 @@ export const useEditorStore = create<EditorState>()(
         project: {
           ...s.project,
           assets: s.project.assets.filter((a) => a.id !== id),
+          tracks: s.project.tracks.map((t) => ({
+            ...t,
+            clips: t.clips.filter((c) => c.assetId !== id),
+          })),
         },
-        // 미디어 슬라이스: 메타데이터도 함께 제거
         assetMeta: (() => {
           const next = new Map(s.assetMeta);
           next.delete(id);
@@ -249,6 +330,8 @@ export const useEditorStore = create<EditorState>()(
       })),
 
     addClip: (trackId, clipData) => {
+      get().pushUndo('Add clip');
+
       const clip: Clip = { ...clipData, id: uid('clip'), trackId };
       set((s) => ({
         project: {
@@ -258,7 +341,6 @@ export const useEditorStore = create<EditorState>()(
           ),
         },
       }));
-      // 미디어 슬라이스: 사용 횟수 증가
       get().incrementUsage(clip.assetId);
       get().recalcDuration();
       return clip;
@@ -292,6 +374,8 @@ export const useEditorStore = create<EditorState>()(
       })),
 
     removeClip: (clipId) => {
+      get().pushUndo('Remove clip');
+
       set((s) => ({
         project: {
           ...s.project,
@@ -308,19 +392,24 @@ export const useEditorStore = create<EditorState>()(
       get().recalcDuration();
     },
 
+    // 버그#4 수정: locked 트랙의 클립은 split 불가
     splitClip: (clipId, time) => {
       const state = get();
       let targetClip: Clip | undefined;
       let trackId = '';
+      let trackLocked = false;
 
       for (const t of state.project.tracks) {
         const found = t.clips.find((c) => c.id === clipId);
         if (found) {
           targetClip = found;
           trackId = t.id;
+          trackLocked = t.locked;
           break;
         }
       }
+
+      if (trackLocked) return;
 
       if (
         targetClip === undefined ||
@@ -329,6 +418,8 @@ export const useEditorStore = create<EditorState>()(
       ) {
         return;
       }
+
+      get().pushUndo('Split clip');
 
       const sourceOffset = time - targetClip.timelineStart;
       const rightClip: Clip = {
@@ -467,16 +558,27 @@ export const useEditorStore = create<EditorState>()(
       }));
     },
 
-    // ── Skill level ──
+    // ── 버그#3 수정: Skill level 전환 시 적절한 탭으로 이동 ──
     setSkillLevel: (level) => {
+      const prevLevel = get().skillLevel;
       const config = SKILL_CONFIGS[level];
       const currentTab = get().activeTab;
       const currentPanel = get().activePanel;
+
+      let nextTab: EditorTab;
+      if (prevLevel === 'beginner' && level !== 'beginner') {
+        nextTab = config.visibleTabs.includes('edit') ? 'edit' : config.visibleTabs[0];
+      } else if (level === 'beginner') {
+        nextTab = 'ai-creator';
+      } else {
+        nextTab = config.visibleTabs.includes(currentTab)
+          ? currentTab
+          : config.visibleTabs[0];
+      }
+
       set({
         skillLevel: level,
-        activeTab: config.visibleTabs.includes(currentTab)
-          ? currentTab
-          : config.visibleTabs[0],
+        activeTab: nextTab,
         activePanel: config.visiblePanels.includes(currentPanel)
           ? currentPanel
           : config.visiblePanels[0],

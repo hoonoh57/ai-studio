@@ -49,7 +49,29 @@ export function TopBar(): React.ReactElement {
   const setSkillLevel = useEditorStore(st => st.setSkillLevel);
   const setActiveTab = useEditorStore(st => st.setActiveTab);
   const [showLevelMenu, setShowLevelMenu] = React.useState(false);
+  const levelRef = React.useRef<HTMLDivElement>(null);
   const config = SKILL_CONFIGS[skillLevel];
+
+  // ── 버그#1 수정: 외부 클릭 시 드롭다운 닫힘 ──
+  React.useEffect(() => {
+    if (!showLevelMenu) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (levelRef.current !== null && !levelRef.current.contains(e.target as Node)) {
+        setShowLevelMenu(false);
+      }
+    };
+
+    // requestAnimationFrame으로 현재 클릭 이벤트가 끝난 뒤 리스너 등록
+    const rafId = requestAnimationFrame(() => {
+      document.addEventListener('mousedown', handleClickOutside);
+    });
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showLevelMenu]);
 
   const handleExport = React.useCallback(() => {
     const json = exportProject();
@@ -66,7 +88,7 @@ export function TopBar(): React.ReactElement {
     <div className={css.bar}>
       <div className={css.logoSection}>
         <span className={css.logoText}>AI-STUDIO</span>
-        <span className={css.version}>v0.35.0327-12</span>
+        <span className={css.version}>v0.36.0327-13</span>
       </div>
       <div className={css.divider} />
       <div className={css.tabGroup}>
@@ -85,7 +107,8 @@ export function TopBar(): React.ReactElement {
       <div className={css.spacer} />
       <span className={css.badge}>🔒 Local</span>
       <div className={css.divider} />
-      <div className={css.levelSelector}>
+      {/* ── 버그#1: ref 추가 ── */}
+      <div className={css.levelSelector} ref={levelRef}>
         <button className={css.levelBtn} onClick={() => setShowLevelMenu(prev => !prev)}>
           <span>{LEVEL_ICONS[skillLevel]}</span>
           <span>{config.label}</span>
