@@ -151,7 +151,24 @@ export function PreviewArea(): React.ReactElement {
       const dt = (now - lastTimeRef.current) / 1000;
       lastTimeRef.current = now;
       const state = useEditorStore.getState();
-      const next = state.currentTime + dt;
+
+      // Get speed from active clip at current time
+      let speed = 1;
+      for (const track of state.project.tracks) {
+        if (!track.visible) continue;
+        for (const clip of track.clips) {
+          if (
+            state.currentTime >= clip.timelineStart &&
+            state.currentTime < clip.timelineEnd
+          ) {
+            speed = clip.speed;
+            break;
+          }
+        }
+        if (speed !== 1) break;
+      }
+
+      const next = state.currentTime + dt * speed;
 
       if (next >= state.project.duration) {
         state.setCurrentTime(0);
@@ -175,6 +192,8 @@ export function PreviewArea(): React.ReactElement {
 
     const clipTime =
       currentTime - activeClip.clip.timelineStart + activeClip.clip.sourceStart;
+
+    video.playbackRate = activeClip.clip.speed;
 
     if (Math.abs(video.currentTime - clipTime) > SEEK_TOLERANCE) {
       video.currentTime = clipTime;
