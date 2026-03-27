@@ -10,7 +10,7 @@ import { TrackRow } from './TrackRow';
 import { TimelineRuler } from './TimelineRuler';
 import { Playhead } from './Playhead';
 import { MarkerTrack } from './MarkerTrack';
-import type { DragType, Clip, Track } from '@/types/project';
+import type { DragType, Clip, Track, TrackType } from '@/types/project';
 
 const PIXELS_PER_SECOND_BASE = 50;
 const TRACK_LABEL_WIDTH = 120;
@@ -18,8 +18,9 @@ const RULER_HEIGHT = 28;
 const MARKER_AREA_HEIGHT = 20;
 const AUTO_SCROLL_MARGIN = 100;
 const RULER_Z_INDEX = 50;
-const TRACK_LABEL_Z_INDEX = 100;
 const OVERLAY_Z_INDEX = 200;
+const AUTO_TRACK_ZONE_HEIGHT = 48;
+const DEFAULT_IMAGE_DURATION = 5;
 
 interface DragState {
   readonly type: DragType;
@@ -32,13 +33,18 @@ interface DragState {
   readonly origSourceEnd: number;
 }
 
-// ── 버그#4 헬퍼: 클립이 locked 트랙에 있는지 확인 ──
 function isClipOnLockedTrack(clipId: string, tracks: readonly Track[]): boolean {
   for (const t of tracks) {
     const found = t.clips.find((c) => c.id === clipId);
     if (found !== undefined) return t.locked;
   }
   return false;
+}
+
+/** 에셋 타입 → 트랙 타입 매핑 (이미지는 video 트랙에) */
+function assetTypeToTrackType(assetType: string): TrackType {
+  if (assetType === 'audio') return 'audio';
+  return 'video'; // video + image 모두 video 트랙
 }
 
 export function TimelinePanel(): React.ReactElement {
@@ -56,13 +62,45 @@ export function TimelinePanel(): React.ReactElement {
   const updateClip = useEditorStore((s) => s.updateClip);
   const recalcDuration = useEditorStore((s) => s.recalcDuration);
 
+  /** 좌우 동기 스크롤을 위한 refs */
   const scrollRef = useRef<HTMLDivElement>(null);
+  const headerScrollRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
 
   const pps = PIXELS_PER_SECOND_BASE * zoom;
   const totalWidth = project.duration * pps;
 
-  // ── Auto-scroll ──
+  // ── 좌우 세로 스크롤 동기화 ──
+  useEffect(() => {
+    const scrollEl = scrollRef.current;
+    const headerEl = headerScrollRef.current;
+    if (scrollEl === null || headerEl === null) return;
+
+    let syncing = false;
+
+    const onMainScroll = () => {
+      if (syncing) return;
+      syncing = true;
+      headerEl.scrollTop = scrollEl.scrollTop;
+      syncing = false;
+    };
+
+    const onHeaderScroll = () => {
+      if (syncing) return;
+      syncing = true;
+      scrollEl.scrollTop = headerEl.scrollTop;
+      syncing = false;
+    };
+
+    scrollEl.addEventListener('scroll', onMainScroll);
+    headerEl.addEventListener('scroll', onHeaderScroll);
+    return () => {
+      scrollEl.removeEventListener('scroll', onMainScroll);
+      headerEl.removeEventListener('scroll', onHeaderScroll);
+    };
+  }, []);
+
+  // ── Auto-scroll (horizontal, playhead follow) ──
   useEffect(() => {
     const unsub = useEditorStore.subscribe(
       (s) => s.currentTime,
@@ -122,7 +160,6 @@ export function TimelinePanel(): React.ReactElement {
       e.stopPropagation();
       selectClip(clip.id);
 
-      // 버그#5: 드래그 시작 시 undo 포인트 저장
       useEditorStore.getState().pushUndo(
         type === 'move' ? 'Move clip' : 'Trim clip',
       );
@@ -202,7 +239,6 @@ export function TimelinePanel(): React.ReactElement {
       const state = useEditorStore.getState();
       const step = 1 / (state.project.fps || 30);
 
-      // ── 버그#5: Undo/Redo 단축키 (Ctrl+Z / Ctrl+Shift+Z) ──
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
         state.undo();
@@ -213,17 +249,14 @@ export function TimelinePanel(): React.ReactElement {
         state.redo();
         return;
       }
-      // Ctrl+Y도 redo로
       if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
         e.preventDefault();
         state.redo();
         return;
       }
 
-      // ── Delete 키: 선택된 클립 삭제 ──
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (state.selectedClipId !== null) {
-          // 버그#4: locked 트랙 클립은 삭제 불가
           if (!isClipOnLockedTrack(state.selectedClipId, state.project.tracks)) {
             e.preventDefault();
             state.removeClip(state.selectedClipId);
@@ -240,15 +273,11 @@ export function TimelinePanel(): React.ReactElement {
           break;
         case 'ArrowRight':
           e.preventDefault();
-          state.setCurrentTime(
-            state.currentTime + (e.shiftKey ? 1 : step),
-          );
+          state.setCurrentTime(state.currentTime + (e.shiftKey ? 1 : step));
           break;
         case 'ArrowLeft':
           e.preventDefault();
-          state.setCurrentTime(
-            state.currentTime - (e.shiftKey ? 1 : step),
-          );
+          state.setCurrentTime(state.currentTime - (e.shiftKey ? 1 : step));
           break;
         case 'PageDown':
           e.preventDefault();
@@ -268,7 +297,6 @@ export function TimelinePanel(): React.ReactElement {
           break;
         case 'c':
         case 'C':
-          // 버그#4: locked 트랙의 클립은 split 불가
           if (state.selectedClipId !== null) {
             if (!isClipOnLockedTrack(state.selectedClipId, state.project.tracks)) {
               state.splitClip(state.selectedClipId, state.currentTime);
@@ -290,7 +318,7 @@ export function TimelinePanel(): React.ReactElement {
     };
   }, []);
 
-  // ── Drop handler ──
+  // ── Drop handler (개선: 에셋타입→트랙 자동 매칭) ──
   const handleDrop = useCallback(
     (e: React.DragEvent, trackId: string) => {
       e.preventDefault();
@@ -301,22 +329,44 @@ export function TimelinePanel(): React.ReactElement {
 
       const rect = scroll.getBoundingClientRect();
       const x = e.clientX - rect.left + scroll.scrollLeft;
-      const startTime = x / pps;
+      const startTime = Math.max(0, x / pps);
 
-      // ── 자동 트랙 생성: 빈 영역 드롭 시 ──
+      // 에셋 기반 트랙 타입 결정
+      const neededTrackType = assetTypeToTrackType(asset.type);
+
+      // 실제 드롭할 트랙 결정
       let targetTrackId = trackId;
+
       if (targetTrackId === '__auto__') {
-        const type = asset.type === 'audio' ? 'audio' : 'video';
-        const newTrack = useEditorStore.getState().addTrack(type);
+        // 자동 트랙 생성 존에 드롭
+        const newTrack = useEditorStore.getState().addTrack(neededTrackType);
         targetTrackId = newTrack.id;
+      } else {
+        // 기존 트랙에 드롭 — 트랙 타입이 호환되는지 확인
+        const targetTrack = project.tracks.find((t) => t.id === targetTrackId);
+        if (targetTrack !== undefined && targetTrack.type !== neededTrackType) {
+          // 타입 불일치: 같은 타입의 빈 트랙 찾기, 없으면 자동 생성
+          const compatibleTrack = project.tracks.find(
+            (t) => t.type === neededTrackType && t.clips.length === 0 && !t.locked,
+          );
+          if (compatibleTrack !== undefined) {
+            targetTrackId = compatibleTrack.id;
+          } else {
+            const newTrack = useEditorStore.getState().addTrack(neededTrackType);
+            targetTrackId = newTrack.id;
+          }
+        }
       }
+
+      // 이미지의 경우 기본 duration 설정
+      const duration = (asset.duration && asset.duration > 0) ? asset.duration : DEFAULT_IMAGE_DURATION;
 
       addClip(targetTrackId, {
         assetId,
         timelineStart: startTime,
-        timelineEnd: startTime + asset.duration,
+        timelineEnd: startTime + duration,
         sourceStart: 0,
-        sourceEnd: asset.duration,
+        sourceEnd: duration,
         speed: 1,
         opacity: 1,
         transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 },
@@ -325,7 +375,7 @@ export function TimelinePanel(): React.ReactElement {
         locked: false,
       });
     },
-    [project.assets, pps, addClip],
+    [project.assets, project.tracks, pps, addClip],
   );
 
   // ── Ruler click ──
@@ -339,6 +389,10 @@ export function TimelinePanel(): React.ReactElement {
     },
     [pps, setCurrentTime],
   );
+
+  // ── 전체 트랙 영역 높이 계산 ──
+  const totalTracksHeight = project.tracks.reduce((sum, t) => sum + t.height, 0)
+    + MARKER_AREA_HEIGHT + AUTO_TRACK_ZONE_HEIGHT;
 
   return (
     <div
@@ -354,37 +408,51 @@ export function TimelinePanel(): React.ReactElement {
       <TimelineToolbar />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Track labels */}
+        {/* ═══ 좌측: Track Headers ═══ */}
         <div
           style={{
             width: TRACK_LABEL_WIDTH,
-            background: 'var(--bg-secondary)',
-            borderRight: '1px solid var(--border)',
             display: 'flex',
             flexDirection: 'column',
-            zIndex: TRACK_LABEL_Z_INDEX,
-            overflowY: 'auto',
-            overflowX: 'hidden',
+            flexShrink: 0,
+            background: 'var(--bg-secondary)',
+            borderRight: '1px solid var(--border)',
           }}
         >
+          {/* Ruler 높이 맞춤 빈 공간 (sticky ruler와 동일 높이) */}
           <div
             style={{
               height: RULER_HEIGHT,
               borderBottom: '1px solid var(--border)',
+              flexShrink: 0,
             }}
           />
-          <div style={{ height: MARKER_AREA_HEIGHT }} />
-          {project.tracks.map((t) => (
-            <TrackHeader key={t.id} track={t} />
-          ))}
+          {/* 세로 스크롤되는 헤더 영역 */}
+          <div
+            ref={headerScrollRef}
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              /* 스크롤바 숨김 — 우측 스크롤바만 표시 */
+              scrollbarWidth: 'none',
+            }}
+          >
+            {/* Marker area 높이 맞춤 */}
+            <div style={{ height: MARKER_AREA_HEIGHT, flexShrink: 0 }} />
+            {project.tracks.map((t) => (
+              <TrackHeader key={t.id} track={t} />
+            ))}
+            {/* 자동 트랙 생성 존 높이 맞춤 */}
+            <div style={{ height: AUTO_TRACK_ZONE_HEIGHT, flexShrink: 0 }} />
+          </div>
         </div>
 
-        {/* Scroll area */}
+        {/* ═══ 우측: Scroll area (ruler + tracks + overlays) ═══ */}
         <div
           style={{
             flex: 1,
-            overflowX: 'auto',
-            overflowY: 'auto',
+            overflow: 'auto',
             position: 'relative',
           }}
           ref={scrollRef}
@@ -396,7 +464,7 @@ export function TimelinePanel(): React.ReactElement {
             }
           }}
         >
-          {/* Ruler */}
+          {/* Ruler (sticky) */}
           <div
             style={{
               position: 'sticky',
@@ -409,16 +477,19 @@ export function TimelinePanel(): React.ReactElement {
             <TimelineRuler pps={pps} duration={project.duration} zoom={zoom} />
           </div>
 
-          {/* Tracks */}
+          {/* Tracks content */}
           <div
             style={{
               position: 'relative',
               width: totalWidth,
-              minHeight: '100%',
+              minHeight: totalTracksHeight,
               zIndex: 10,
             }}
           >
+            {/* Marker area */}
             <div style={{ height: MARKER_AREA_HEIGHT }} />
+
+            {/* Track Rows */}
             {project.tracks.map((t) => (
               <TrackRow
                 key={t.id}
@@ -441,26 +512,30 @@ export function TimelinePanel(): React.ReactElement {
               />
             ))}
 
-            {/* 트랙 아래 빈 영역에 드롭 가능한 "자동 생성" 존 추가 */}
+            {/* 자동 트랙 생성 존 */}
             <div
               style={{
-                height: 60,
-                borderBottom: '1px dashed var(--border)',
+                height: AUTO_TRACK_ZONE_HEIGHT,
+                borderTop: '1px dashed var(--border)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 fontSize: 10,
                 color: 'var(--text-muted)',
                 cursor: 'default',
+                background: 'rgba(124, 92, 252, 0.03)',
               }}
               onDrop={(e) => handleDrop(e, '__auto__')}
-              onDragOver={(e) => e.preventDefault()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+              }}
             >
-              + 여기에 드롭하면 새 트랙이 자동 생성됩니다
+              ＋ 여기에 드롭하면 새 트랙이 자동 생성됩니다
             </div>
           </div>
 
-          {/* Overlays */}
+          {/* Overlays (Markers + Playhead) */}
           <div
             style={{
               position: 'absolute',

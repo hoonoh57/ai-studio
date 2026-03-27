@@ -6,6 +6,7 @@
   --bg-surface: #252547;
   --bg-hover: #2d2d5e;
   --bg-active: #3a3a7a;
+  --bg-deep: #141428;
 
   --text-primary: #e0e0ff;
   --text-secondary: #a0a0cc;
@@ -45,7 +46,7 @@
   --iconbar-width: 48px;
   --media-panel-width: 260px;
   --properties-width: 260px;
-  --timeline-height: 260px;
+  --timeline-height: 320px;
   --track-height-video: 48px;
   --track-height-audio: 40px;
 }

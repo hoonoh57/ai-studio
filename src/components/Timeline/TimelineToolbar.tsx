@@ -282,7 +282,7 @@ export function TimelineToolbar(): React.ReactElement {
       </div>
 
       <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-        {tracks.length}/{config.maxTracks}
+        {tracks.length}/{config.maxTracks >= 999 ? '∞' : config.maxTracks}
       </span>
 
       <div style={styles.separator} />
