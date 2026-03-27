@@ -16,6 +16,7 @@ import type {
 import type { SkillLevel, EditorTab, PanelId, SkillConfig } from '@/types/project';
 import { SKILL_CONFIGS } from '@/types/project';
 import { generateWaveformFromUrl, createEmptyWaveform } from '@/lib/core/waveformGenerator';
+import { generateThumbnails, createEmptyThumbnails } from '@/lib/core/thumbnailGenerator';
 
 let uidCounter = 0;
 const uid = (prefix: string) => `${prefix}_${Date.now()}_${++uidCounter}`;
@@ -192,25 +193,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const asset = get().project.assets.find(a => a.id === clip.assetId);
     if (asset) {
       if (asset.type === 'video') {
-        const video = document.createElement('video');
-        video.src = asset.src; video.crossOrigin = 'anonymous'; video.muted = true; video.load();
-        video.onloadeddata = async () => {
-          const frames: string[] = [];
-          const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 90;
-          const ctx = canvas.getContext('2d')!;
-          const interval = asset.duration / 10;
-          for (let time = 0; time < asset.duration; time += interval) {
-            video.currentTime = time;
-            await new Promise(r => { video.onseeked = r; });
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            frames.push(canvas.toDataURL('image/jpeg', 0.6));
-          }
-          get().cacheThumbnail(asset.id, { assetId: asset.id, frames, interval });
+        (async () => {
+          const thumbs = await generateThumbnails(asset.src, asset.id);
+          get().cacheThumbnail(asset.id, thumbs || createEmptyThumbnails(asset.id, asset.duration));
           
           // Real Audio Waveform from video track
           const wf = await generateWaveformFromUrl(asset.src, asset.id);
           get().cacheWaveform(asset.id, wf || createEmptyWaveform(asset.id, asset.duration));
-        };
+        })();
       } else if (asset.type === 'audio') {
         (async () => {
           const wf = await generateWaveformFromUrl(asset.src, asset.id);
