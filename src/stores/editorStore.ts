@@ -1,6 +1,7 @@
 // src/stores/editorStore.ts
 
 import { create } from 'zustand';
+import { subscribeWithSelector } from 'zustand/middleware';
 import type {
   Project,
   Track,
@@ -122,7 +123,8 @@ const defaultProject: Project = {
   assets: [],
 };
 
-export const useEditorStore = create<EditorState>((set, get) => ({
+export const useEditorStore = create<EditorState>()(
+  subscribeWithSelector((set, get) => ({
   // ── Initial state ──
   project: defaultProject,
   currentTime: 0,
@@ -461,4 +463,4 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   // ── Export ──
   exportProject: () => JSON.stringify(get().project, null, 2),
-}));
+})));

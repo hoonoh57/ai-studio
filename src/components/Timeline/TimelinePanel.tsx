@@ -4,8 +4,8 @@ import TimelineToolbar from './TimelineToolbar';
 import TrackHeader from './TrackHeader';
 import TrackRow from './TrackRow';
 import TimelineRuler from './TimelineRuler';
-import Playhead from './Playhead';
-import MarkerTrack from './MarkerTrack';
+import { Playhead } from './Playhead';
+import { MarkerTrack } from './MarkerTrack';
 import { snapTime } from '@/lib/core/snapEngine';
 import { executeTrim } from '@/lib/core/trimEngine';
 
