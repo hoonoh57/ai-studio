@@ -2,7 +2,7 @@ import React from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import type { Clip, Track, ThumbnailData, WaveformData } from '@/types/project';
 import { WaveformView } from './WaveformView';
-import ThumbnailStrip from './ThumbnailStrip';
+import { ThumbnailStrip } from './ThumbnailStrip';
 
 type ClipBlockProps = {
   clip: Clip;

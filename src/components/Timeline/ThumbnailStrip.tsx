@@ -1,8 +1,10 @@
-import React, { useEffect, useRef } from 'react';
+// src/components/Timeline/ThumbnailStrip.tsx
+
+import React, { useRef, useEffect } from 'react';
 import type { ThumbnailData } from '@/types/project';
 
 type ThumbnailStripProps = {
-  thumbnailData?: ThumbnailData;
+  thumbnailData: ThumbnailData | null;
   clipStart: number;
   clipEnd: number;
   sourceStart: number;
@@ -11,7 +13,23 @@ type ThumbnailStripProps = {
   height: number;
 };
 
-export default function ThumbnailStrip({
+const FALLBACK_BG = '#16213e';
+const FALLBACK_TEXT = '#6a6a99';
+
+function loadImage(src: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    if (src.length === 0) {
+      resolve(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+export function ThumbnailStrip({
   thumbnailData,
   clipStart,
   clipEnd,
@@ -19,55 +37,80 @@ export default function ThumbnailStrip({
   sourceEnd,
   width,
   height,
-}: ThumbnailStripProps) {
+}: ThumbnailStripProps): React.ReactElement {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (canvas === null) return;
 
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (ctx === null) return;
 
     ctx.clearRect(0, 0, width, height);
 
-    if (!thumbnailData || !thumbnailData.frames.length) {
-      ctx.fillStyle = 'var(--bg-secondary)';
+    if (
+      thumbnailData === null ||
+      thumbnailData.frames.length === 0 ||
+      thumbnailData.interval <= 0
+    ) {
+      ctx.fillStyle = FALLBACK_BG;
       ctx.fillRect(0, 0, width, height);
-      ctx.fillStyle = 'var(--text-muted)';
-      ctx.font = '11px sans-serif';
+      ctx.fillStyle = FALLBACK_TEXT;
+      ctx.font = '10px sans-serif';
       ctx.textBaseline = 'middle';
-      ctx.fillText('Generating...', 8, height / 2);
+      ctx.fillText('Generating...', 4, height / 2);
       return;
     }
 
-    const totalFrames = thumbnailData.frames.length;
-    const interval = thumbnailData.interval;
-    const clipSourceDuration = sourceEnd - sourceStart;
-    
-    // Calculate how many thumbnails we can fit in the physical width
-    // Each thumbnail is approximately 160px wide at base zoom, 
-    // but here we fill the 'width' with frames from the source range.
-    const startFrame = Math.max(0, Math.floor(sourceStart / interval));
-    const endFrame = Math.min(totalFrames - 1, Math.ceil(sourceEnd / interval));
-    const frameRangeCount = Math.max(1, endFrame - startFrame + 1);
+    const { frames, interval } = thumbnailData;
+    const totalFrames = frames.length;
 
-    const tileWidth = width / frameRangeCount;
+    const startFrame = Math.max(
+      0,
+      Math.floor(sourceStart / interval),
+    );
+    const endFrame = Math.min(
+      totalFrames - 1,
+      Math.floor(sourceEnd / interval),
+    );
+    const count = Math.max(1, endFrame - startFrame + 1);
+    const tileWidth = width / count;
 
-    const drawFrame = (index: number, x: number) => {
-      if (!thumbnailData.frames[index]) return;
-      const img = new Image();
-      img.src = thumbnailData.frames[index];
-      img.onload = () => {
-        ctx.drawImage(img, x, 0, tileWidth, height);
-      };
+    let cancelled = false;
+
+    const drawAll = async () => {
+      for (let i = 0; i < count; i++) {
+        if (cancelled) return;
+
+        const frameIndex = Math.min(startFrame + i, totalFrames - 1);
+        const x = i * tileWidth;
+        const img = await loadImage(frames[frameIndex]);
+
+        if (cancelled) return;
+
+        if (img !== null) {
+          ctx.drawImage(img, x, 0, tileWidth, height);
+        } else {
+          ctx.fillStyle = FALLBACK_BG;
+          ctx.fillRect(x, 0, tileWidth, height);
+        }
+      }
     };
 
-    for (let i = startFrame; i <= endFrame; i++) {
-      drawFrame(i, (i - startFrame) * tileWidth);
-    }
+    drawAll();
+
+    return () => {
+      cancelled = true;
+    };
   }, [thumbnailData, sourceStart, sourceEnd, width, height]);
 
-  return <canvas ref={canvasRef} width={width} height={height} style={{ width, height }} />;
+  return (
+    <canvas
+      ref={canvasRef}
+      width={width}
+      height={height}
+      style={{ width, height, display: 'block' }}
+    />
+  );
 }
-
