@@ -26,34 +26,32 @@ export function collectSnapPoints(
 
   const add = (time: number, source: SnapPoint['source'], trackId?: string) => {
     const rounded = Math.round(time * 1000) / 1000;
-    // For set-based deduplication, we check rounding. 
-    // But since SnapPoint has other fields, we use a simple set of numbers for basic time points.
     if (seen.has(rounded) && source !== 'clip-start' && source !== 'clip-end') return;
     seen.add(rounded);
     points.push({ time: rounded, source, trackId });
   };
 
-  add(0, SNAP_SOURCES.clipStart);
-  add(projectDuration, SNAP_SOURCES.clipEnd);
+  add(0, 'clip-start');
+  add(projectDuration, 'clip-end');
 
   for (const track of tracks) {
     for (const clip of track.clips) {
-      add(clip.timelineStart, SNAP_SOURCES.clipStart, track.id);
-      add(clip.timelineEnd, SNAP_SOURCES.clipEnd, track.id);
+      add(clip.startTime, 'clip-start', track.id);
+      add(clip.startTime + clip.duration, 'clip-end', track.id);
     }
   }
 
-  add(playheadTime, SNAP_SOURCES.playhead);
+  add(playheadTime, 'playhead');
 
   for (const marker of markers) {
-    add(marker.time, SNAP_SOURCES.marker);
+    add(marker.time, 'marker');
   }
 
   if (inOut.inPoint !== null) {
-    add(inOut.inPoint, SNAP_SOURCES.inOut);
+    add(inOut.inPoint, 'in');
   }
   if (inOut.outPoint !== null) {
-    add(inOut.outPoint, SNAP_SOURCES.inOut);
+    add(inOut.outPoint, 'out');
   }
 
   return points;
@@ -86,16 +84,12 @@ export function findNearestSnap(
 
 /**
  * 스냅이 활성화되어 있으면 가장 가까운 스냅 포인트로 보정된 시간을 반환합니다.
- * 비활성화 시 원본 시간을 그대로 반환합니다.
- *
- * threshold는 zoom 레벨에 반비례하여 자동 조정됩니다.
- * zoom이 높으면(확대) threshold가 작아지고, 낮으면(축소) 커집니다.
  */
 export function snapTime(
   time: number,
   tracks: readonly Track[],
-  markers: readonly Marker[],
-  inOut: InOutRange,
+  markers: readonly Marker[] | undefined,
+  inOut: InOutRange | undefined,
   playheadTime: number,
   projectDuration: number,
   snapEnabled: boolean,
@@ -108,8 +102,8 @@ export function snapTime(
 
   const points = collectSnapPoints(
     tracks,
-    markers,
-    inOut,
+    markers ?? [],
+    inOut ?? { inPoint: null, outPoint: null },
     playheadTime,
     projectDuration,
   );

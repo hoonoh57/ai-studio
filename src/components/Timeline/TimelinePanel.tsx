@@ -1,561 +1,277 @@
-// src/components/Timeline/TimelinePanel.tsx
-
-import React, { useRef, useEffect, useCallback } from 'react';
+/* ─── src/components/Timeline/TimelinePanel.tsx ─── */
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
-import { snapTime } from '@/lib/core/snapEngine';
-import { executeTrim } from '@/lib/core/trimEngine';
+import { SKILL_CONFIGS, assetTypeToTrackType } from '@/types/project';
+import type { Track } from '@/types/project';
 import { TimelineToolbar } from './TimelineToolbar';
 import { TrackHeader } from './TrackHeader';
 import { TrackRow } from './TrackRow';
 import { TimelineRuler } from './TimelineRuler';
 import { Playhead } from './Playhead';
 import { MarkerTrack } from './MarkerTrack';
-import type { DragType, Clip, Track, TrackType } from '@/types/project';
+import { snapTime } from '@/lib/core/snapEngine';
 
-const PIXELS_PER_SECOND_BASE = 50;
-const TRACK_LABEL_WIDTH = 120;
-const RULER_HEIGHT = 28;
-const MARKER_AREA_HEIGHT = 20;
-const AUTO_SCROLL_MARGIN = 100;
-const RULER_Z_INDEX = 50;
-const OVERLAY_Z_INDEX = 200;
-const AUTO_TRACK_ZONE_HEIGHT = 48;
-const DEFAULT_IMAGE_DURATION = 5;
+/* snapTimeFn – 정정된 명칭 사용 */
+const snapTimeFn = snapTime;
+
+/* ========== 상수 ========== */
+const PPS_BASE = 50;
+const TRACK_LABEL_W = 160;
+const RULER_H = 28;
+const AUTO_ZONE_H = 40;
 
 interface DragState {
-  readonly type: DragType;
-  readonly clipId: string;
-  readonly trackId: string;
-  readonly startX: number;
-  readonly origStart: number;
-  readonly origEnd: number;
-  readonly origSourceStart: number;
-  readonly origSourceEnd: number;
+  type: 'move' | 'trim-left' | 'trim-right';
+  clipId: string;
+  trackId: string;
+  startX: number;
+  startTime: number;
+  originalStartTime: number;
+  originalDuration: number;
 }
 
-function isClipOnLockedTrack(clipId: string, tracks: readonly Track[]): boolean {
+function isClipOnLockedTrack(clipId: string, tracks: Track[]): boolean {
   for (const t of tracks) {
-    const found = t.clips.find((c) => c.id === clipId);
-    if (found !== undefined) return t.locked;
+    if (t.locked && t.clips.some(c => c.id === clipId)) return true;
   }
   return false;
 }
 
-/** 에셋 타입 → 트랙 타입 매핑 (이미지는 video 트랙에) */
-function assetTypeToTrackType(assetType: string): TrackType {
-  if (assetType === 'audio') return 'audio';
-  return 'video'; // video + image 모두 video 트랙
-}
+export const TimelinePanel: React.FC = () => {
+  const store = useEditorStore();
+  const {
+    project, zoom, selectedClipId, snapEnabled, markers, inOut,
+    setCurrentTime, selectClip, addClip, updateClip, removeClip,
+    recalcDuration, currentTime, pushUndo, undo, redo, canUndo, canRedo,
+    splitClip, addMarker, togglePlay, skillLevel, addTrackChecked,
+  } = store;
 
-export function TimelinePanel(): React.ReactElement {
-  const project = useEditorStore((s) => s.project);
-  const zoom = useEditorStore((s) => s.zoom);
-  const selectedClipId = useEditorStore((s) => s.selectedClipId);
-  const snapEnabled = useEditorStore((s) => s.snapEnabled);
-  const markers = useEditorStore((s) => s.markers);
-  const inOut = useEditorStore((s) => s.inOut);
-  const trimMode = useEditorStore((s) => s.trimMode);
+  const config = SKILL_CONFIGS[skillLevel] ?? SKILL_CONFIGS.beginner;
+  const reorderTracks = (store as any).reorderTracks;
 
-  const setCurrentTime = useEditorStore((s) => s.setCurrentTime);
-  const selectClip = useEditorStore((s) => s.selectClip);
-  const addClip = useEditorStore((s) => s.addClip);
-  const updateClip = useEditorStore((s) => s.updateClip);
-  const recalcDuration = useEditorStore((s) => s.recalcDuration);
-
-  /** 좌우 동기 스크롤을 위한 refs */
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const headerScrollRef = useRef<HTMLDivElement>(null);
+  const labelScrollRef = useRef<HTMLDivElement>(null);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
 
-  const pps = PIXELS_PER_SECOND_BASE * zoom;
-  const totalWidth = project.duration * pps;
+  const [dragTrackFrom, setDragTrackFrom] = useState<number | null>(null);
+  const [dragTrackTo, setDragTrackTo] = useState<number | null>(null);
 
-  // ── 좌우 세로 스크롤 동기화 ──
-  useEffect(() => {
-    const scrollEl = scrollRef.current;
-    const headerEl = headerScrollRef.current;
-    if (scrollEl === null || headerEl === null) return;
+  const pps = PPS_BASE * zoom;
+  const totalW = Math.max(project.duration * pps, 800);
+  const tracks = project.tracks;
+  const totalTrackH = tracks.reduce((sum, t) => sum + t.height, 0);
 
-    let syncing = false;
-
-    const onMainScroll = () => {
-      if (syncing) return;
-      syncing = true;
-      headerEl.scrollTop = scrollEl.scrollTop;
-      syncing = false;
-    };
-
-    const onHeaderScroll = () => {
-      if (syncing) return;
-      syncing = true;
-      scrollEl.scrollTop = headerEl.scrollTop;
-      syncing = false;
-    };
-
-    scrollEl.addEventListener('scroll', onMainScroll);
-    headerEl.addEventListener('scroll', onHeaderScroll);
-    return () => {
-      scrollEl.removeEventListener('scroll', onMainScroll);
-      headerEl.removeEventListener('scroll', onHeaderScroll);
-    };
+  const syncScroll = useCallback((source: 'label' | 'main') => {
+    const label = labelScrollRef.current;
+    const main = mainScrollRef.current;
+    if (!label || !main) return;
+    if (source === 'main') label.scrollTop = main.scrollTop;
+    else main.scrollTop = label.scrollTop;
   }, []);
 
-  // ── Auto-scroll (horizontal, playhead follow) ──
   useEffect(() => {
-    const unsub = useEditorStore.subscribe(
-      (s) => s.currentTime,
-      (t) => {
-        const scroll = scrollRef.current;
-        if (scroll === null) return;
-        const x = t * pps;
-        const viewStart = scroll.scrollLeft;
-        const viewEnd = scroll.scrollLeft + scroll.offsetWidth;
-        if (x > viewEnd - AUTO_SCROLL_MARGIN) {
-          scroll.scrollLeft = x - AUTO_SCROLL_MARGIN;
-        } else if (x < viewStart + AUTO_SCROLL_MARGIN) {
-          scroll.scrollLeft = Math.max(0, x - AUTO_SCROLL_MARGIN);
-        }
-      },
+    const el = mainScrollRef.current;
+    if (!el) return;
+    const px = currentTime * pps;
+    const scrollLeft = el.scrollLeft;
+    const w = el.clientWidth;
+    if (px < scrollLeft || px > scrollLeft + w - 60) {
+      el.scrollLeft = Math.max(0, px - w / 2);
+    }
+  }, [currentTime, pps]);
+
+  const snap = useCallback((t: number): number => {
+    return snapTimeFn(
+      t,
+      tracks,
+      markers,
+      inOut,
+      currentTime,
+      project.duration,
+      snapEnabled,
+      zoom,
     );
-    return unsub;
-  }, [pps]);
+  }, [snapEnabled, tracks, markers, inOut, currentTime, project.duration, zoom]);
 
-  // ── Snap helper ──
-  const snap = useCallback(
-    (time: number): number =>
-      snapTime(
-        time,
-        project.tracks,
-        markers,
-        inOut,
-        useEditorStore.getState().currentTime,
-        project.duration,
-        snapEnabled,
-        zoom,
-      ),
-    [project.tracks, markers, inOut, project.duration, snapEnabled, zoom],
-  );
+  const findClipAndTrack = useCallback((clipId: string) => {
+    for (const t of tracks) {
+      const c = t.clips.find(cl => cl.id === clipId);
+      if (c) return { clip: c, track: t };
+    }
+    return null;
+  }, [tracks]);
 
-  // ── Find clip & track by clipId ──
-  const findClipAndTrack = useCallback(
-    (clipId: string): { clip: Clip; track: Track } | null => {
-      for (const t of project.tracks) {
-        const c = t.clips.find((cl) => cl.id === clipId);
-        if (c !== undefined) return { clip: c, track: t };
-      }
-      return null;
-    },
-    [project.tracks],
-  );
+  const handleMouseDown = useCallback((
+    e: React.MouseEvent, clipId: string, trackId: string,
+    type: 'move' | 'trim-left' | 'trim-right',
+  ) => {
+    if (isClipOnLockedTrack(clipId, tracks)) return;
+    e.stopPropagation();
+    const found = findClipAndTrack(clipId);
+    if (!found) return;
+    pushUndo('클립 편집');
+    dragRef.current = {
+      type, clipId, trackId,
+      startX: e.clientX,
+      startTime: found.clip.startTime,
+      originalStartTime: found.clip.startTime,
+      originalDuration: found.clip.duration,
+    };
+    selectClip(clipId);
+  }, [tracks, findClipAndTrack, pushUndo, selectClip]);
 
-  // ── Drag handlers ──
-  const startDrag = useCallback(
-    (
-      e: React.MouseEvent,
-      type: DragType,
-      clip: Clip,
-      trackId: string,
-    ) => {
-      e.preventDefault();
-      e.stopPropagation();
-      selectClip(clip.id);
-
-      useEditorStore.getState().pushUndo(
-        type === 'move' ? 'Move clip' : 'Trim clip',
-      );
-
-      dragRef.current = {
-        type,
-        clipId: clip.id,
-        trackId,
-        startX: e.clientX,
-        origStart: clip.timelineStart,
-        origEnd: clip.timelineEnd,
-        origSourceStart: clip.sourceStart,
-        origSourceEnd: clip.sourceEnd,
-      };
-
-      const onMove = (ev: MouseEvent) => {
-        const d = dragRef.current;
-        if (d === null) return;
-        const dt = (ev.clientX - d.startX) / pps;
-        const dur = d.origEnd - d.origStart;
-
-        if (d.type === 'move') {
-          const snapped = snap(d.origStart + dt);
-          updateClip(d.clipId, {
-            timelineStart: snapped,
-            timelineEnd: snapped + dur,
-          });
-          return;
-        }
-
-        const found = findClipAndTrack(d.clipId);
-        if (found === null) return;
-
-        const asset = project.assets.find(
-          (a) => a.id === found.clip.assetId,
-        );
-        const assetDuration = asset?.duration ?? found.clip.sourceEnd;
-        const side = d.type === 'trim-left' ? 'left' : 'right';
-
-        const results = executeTrim(
-          found.clip,
-          found.track,
-          side as 'left' | 'right',
-          dt,
-          trimMode,
-          assetDuration,
-        );
-
-        for (const r of results) {
-          updateClip(r.clipId, r.updates);
-        }
-      };
-
-      const onUp = () => {
-        dragRef.current = null;
-        recalcDuration();
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
-      };
-
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
-    },
-    [pps, selectClip, updateClip, recalcDuration, snap, findClipAndTrack, trimMode, project.assets],
-  );
-
-  // ── Keyboard shortcuts ──
   useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
+    const onMove = (e: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const dx = e.clientX - d.startX;
+      const dt = dx / pps;
+      if (d.type === 'move') {
+        updateClip(d.clipId, { startTime: snap(Math.max(0, d.startTime + dt)) });
+      } else if (d.type === 'trim-left') {
+        const newStart = snap(Math.max(0, d.startTime + dt));
+        const shrink = newStart - d.originalStartTime;
+        updateClip(d.clipId, { startTime: newStart, duration: Math.max(0.1, d.originalDuration - shrink) });
+      } else if (d.type === 'trim-right') {
+        updateClip(d.clipId, { duration: snap(Math.max(0.1, d.originalDuration + dt)) });
       }
+    };
+    const onUp = () => { dragRef.current = null; recalcDuration(); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  }, [pps, snap, updateClip, recalcDuration]);
 
-      const state = useEditorStore.getState();
-      const step = 1 / (state.project.fps || 30);
-
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        state.undo();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'Z' || (e.key === 'z' && e.shiftKey))) {
-        e.preventDefault();
-        state.redo();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
-        e.preventDefault();
-        state.redo();
-        return;
-      }
-
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return;
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); if (canUndo()) undo(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) { e.preventDefault(); if (canRedo()) redo(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); if (canRedo()) redo(); return; }
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (state.selectedClipId !== null) {
-          if (!isClipOnLockedTrack(state.selectedClipId, state.project.tracks)) {
-            e.preventDefault();
-            state.removeClip(state.selectedClipId);
-          }
+        if (selectedClipId && !isClipOnLockedTrack(selectedClipId, tracks)) {
+          e.preventDefault(); pushUndo('클립 삭제'); removeClip(selectedClipId); selectClip(null);
         }
         return;
       }
-
-      switch (e.key) {
-        case ' ':
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          state.togglePlay();
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          state.setCurrentTime(state.currentTime + (e.shiftKey ? 1 : step));
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          state.setCurrentTime(state.currentTime - (e.shiftKey ? 1 : step));
-          break;
-        case 'PageDown':
-          e.preventDefault();
-          state.setCurrentTime(state.currentTime + 5);
-          break;
-        case 'PageUp':
-          e.preventDefault();
-          state.setCurrentTime(state.currentTime - 5);
-          break;
-        case 'Home':
-          e.preventDefault();
-          state.setCurrentTime(0);
-          break;
-        case 'End':
-          e.preventDefault();
-          state.setCurrentTime(state.project.duration);
-          break;
-        case 'c':
-        case 'C':
-          if (state.selectedClipId !== null) {
-            if (!isClipOnLockedTrack(state.selectedClipId, state.project.tracks)) {
-              state.splitClip(state.selectedClipId, state.currentTime);
-            }
-          }
-          break;
-        case 'm':
-        case 'M':
-          state.addMarker(state.currentTime);
-          break;
-        default:
-          break;
+      if (e.key.toLowerCase() === 'c' && !e.ctrlKey && !e.metaKey) {
+        if (selectedClipId && !isClipOnLockedTrack(selectedClipId, tracks)) splitClip(selectedClipId, currentTime);
+        return;
       }
+      if (e.key.toLowerCase() === 'm' && !e.ctrlKey) {
+        addMarker({ id: `mkr_${Date.now()}`, time: currentTime, label: '', color: '#FFD700' });
+        return;
+      }
+      if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
+      if (e.key === 'ArrowLeft') { setCurrentTime(Math.max(0, currentTime - 1 / 30)); return; }
+      if (e.key === 'ArrowRight') { setCurrentTime(currentTime + 1 / 30); return; }
+      if (e.key === 'Home') { setCurrentTime(0); return; }
+      if (e.key === 'End') { setCurrentTime(project.duration); return; }
     };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedClipId, currentTime, tracks, project.duration, canUndo, canRedo, undo, redo, pushUndo, removeClip, selectClip, splitClip, addMarker, togglePlay, setCurrentTime]);
 
-    document.addEventListener('keydown', handleKey, { capture: true });
-    return () => {
-      document.removeEventListener('keydown', handleKey, { capture: true });
-    };
+  const handleDrop = useCallback((e: React.DragEvent, trackId: string) => {
+    e.preventDefault();
+    const assetId = e.dataTransfer.getData('assetId');
+    if (!assetId) return;
+    const asset = project.assets.find(a => a.id === assetId);
+    if (!asset) return;
+
+    let targetTrackId = trackId;
+    if (trackId === '__auto__') {
+      const neededType = assetTypeToTrackType(asset.type);
+      const ok = addTrackChecked(neededType);
+      if (!ok) return;
+      const newTracks = useEditorStore.getState().project.tracks;
+      targetTrackId = newTracks[newTracks.length - 1].id;
+    } else {
+      const targetTrack = tracks.find(t => t.id === trackId);
+      const neededType = assetTypeToTrackType(asset.type);
+      if (targetTrack && targetTrack.type !== neededType) {
+        const compatible = tracks.find(t => t.type === neededType && !t.locked);
+        if (compatible) targetTrackId = compatible.id;
+        else {
+          const ok = addTrackChecked(neededType);
+          if (!ok) return;
+          const newTracks = useEditorStore.getState().project.tracks;
+          targetTrackId = newTracks[newTracks.length - 1].id;
+        }
+      }
+    }
+
+    const rect = mainScrollRef.current?.getBoundingClientRect();
+    const scrollLeft = mainScrollRef.current?.scrollLeft ?? 0;
+    const x = rect ? e.clientX - rect.left + scrollLeft : 0;
+    const startTime = snap(Math.max(0, x / pps));
+    const duration = asset.type === 'image' ? 5 : (asset.duration || 5);
+
+    pushUndo('클립 추가');
+    addClip(targetTrackId, {
+      id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      assetId: asset.id, startTime, duration, inPoint: 0, outPoint: duration,
+      transform: { x: 0, y: 0, scale: 1, rotation: 0 },
+      filters: [], blendMode: 'normal', opacity: 1, volume: asset.type === 'audio' ? 1 : undefined, speed: 1,
+    });
+    recalcDuration();
+  }, [project.assets, tracks, snap, pps, pushUndo, addClip, addTrackChecked, recalcDuration]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
   }, []);
 
-  // ── Drop handler (개선: 에셋타입→트랙 자동 매칭) ──
-  const handleDrop = useCallback(
-    (e: React.DragEvent, trackId: string) => {
-      e.preventDefault();
-      const assetId = e.dataTransfer.getData('assetId');
-      const asset = project.assets.find((a) => a.id === assetId);
-      const scroll = scrollRef.current;
-      if (asset === undefined || scroll === null) return;
+  const handleRulerClick = useCallback((e: React.MouseEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const scrollLeft = mainScrollRef.current?.scrollLeft ?? 0;
+    setCurrentTime(Math.max(0, (e.clientX - rect.left + scrollLeft) / pps));
+  }, [pps, setCurrentTime]);
 
-      const rect = scroll.getBoundingClientRect();
-      const x = e.clientX - rect.left + scroll.scrollLeft;
-      const startTime = Math.max(0, x / pps);
-
-      // 에셋 기반 트랙 타입 결정
-      const neededTrackType = assetTypeToTrackType(asset.type);
-
-      // 실제 드롭할 트랙 결정
-      let targetTrackId = trackId;
-
-      if (targetTrackId === '__auto__') {
-        // 자동 트랙 생성 존에 드롭
-        const newTrack = useEditorStore.getState().addTrack(neededTrackType);
-        targetTrackId = newTrack.id;
-      } else {
-        // 기존 트랙에 드롭 — 트랙 타입이 호환되는지 확인
-        const targetTrack = project.tracks.find((t) => t.id === targetTrackId);
-        if (targetTrack !== undefined && targetTrack.type !== neededTrackType) {
-          // 타입 불일치: 같은 타입의 빈 트랙 찾기, 없으면 자동 생성
-          const compatibleTrack = project.tracks.find(
-            (t) => t.type === neededTrackType && t.clips.length === 0 && !t.locked,
-          );
-          if (compatibleTrack !== undefined) {
-            targetTrackId = compatibleTrack.id;
-          } else {
-            const newTrack = useEditorStore.getState().addTrack(neededTrackType);
-            targetTrackId = newTrack.id;
-          }
-        }
+  const handleTrackDragEnd = useCallback(() => {
+    if (dragTrackFrom != null && dragTrackTo != null && dragTrackFrom !== dragTrackTo) {
+      if (typeof reorderTracks === 'function') {
+        pushUndo('트랙 재정렬');
+        reorderTracks(dragTrackFrom, dragTrackTo);
       }
-
-      // 이미지의 경우 기본 duration 설정
-      const duration = (asset.duration && asset.duration > 0) ? asset.duration : DEFAULT_IMAGE_DURATION;
-
-      addClip(targetTrackId, {
-        assetId,
-        timelineStart: startTime,
-        timelineEnd: startTime + duration,
-        sourceStart: 0,
-        sourceEnd: duration,
-        speed: 1,
-        opacity: 1,
-        transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 },
-        blendMode: 'normal',
-        filters: [],
-        locked: false,
-      });
-    },
-    [project.assets, project.tracks, pps, addClip],
-  );
-
-  // ── Ruler click ──
-  const handleRulerClick = useCallback(
-    (e: React.MouseEvent) => {
-      const scroll = scrollRef.current;
-      if (scroll === null) return;
-      const rect = scroll.getBoundingClientRect();
-      const x = e.clientX - rect.left + scroll.scrollLeft;
-      setCurrentTime(x / pps);
-    },
-    [pps, setCurrentTime],
-  );
-
-  // ── 전체 트랙 영역 높이 계산 ──
-  const totalTracksHeight = project.tracks.reduce((sum, t) => sum + t.height, 0)
-    + MARKER_AREA_HEIGHT + AUTO_TRACK_ZONE_HEIGHT;
+    }
+    setDragTrackFrom(null); setDragTrackTo(null);
+  }, [dragTrackFrom, dragTrackTo, pushUndo, reorderTracks]);
 
   return (
-    <div
-      style={{
-        height: 'var(--timeline-height)',
-        background: 'var(--bg-panel)',
-        display: 'flex',
-        flexDirection: 'column',
-        borderTop: '2px solid var(--border)',
-        overflow: 'hidden',
-      }}
-    >
+    <div ref={panelRef} tabIndex={0} style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary, #181825)', borderTop: '1px solid var(--border-primary, #333)', overflow: 'hidden' }}>
       <TimelineToolbar />
-
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* ═══ 좌측: Track Headers ═══ */}
-        <div
-          style={{
-            width: TRACK_LABEL_WIDTH,
-            display: 'flex',
-            flexDirection: 'column',
-            flexShrink: 0,
-            background: 'var(--bg-secondary)',
-            borderRight: '1px solid var(--border)',
-          }}
-        >
-          {/* Ruler 높이 맞춤 빈 공간 (sticky ruler와 동일 높이) */}
-          <div
-            style={{
-              height: RULER_HEIGHT,
-              borderBottom: '1px solid var(--border)',
-              flexShrink: 0,
-            }}
-          />
-          {/* 세로 스크롤되는 헤더 영역 */}
-          <div
-            ref={headerScrollRef}
-            style={{
-              flex: 1,
-              overflowY: 'auto',
-              overflowX: 'hidden',
-              /* 스크롤바 숨김 — 우측 스크롤바만 표시 */
-              scrollbarWidth: 'none',
-            }}
-          >
-            {/* Marker area 높이 맞춤 */}
-            <div style={{ height: MARKER_AREA_HEIGHT, flexShrink: 0 }} />
-            {project.tracks.map((t) => (
-              <TrackHeader key={t.id} track={t} />
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <div style={{ width: TRACK_LABEL_W, minWidth: TRACK_LABEL_W, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border-secondary, #333)' }}>
+          <div style={{ height: RULER_H, flexShrink: 0, borderBottom: '1px solid var(--border-secondary, #333)' }} />
+          <div ref={labelScrollRef} onScroll={() => syncScroll('label')} style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', scrollbarWidth: 'none' }}>
+            {tracks.map((t, idx) => (
+              <TrackHeader key={t.id} track={t} index={idx} trackCount={tracks.length}
+                onDragStart={setDragTrackFrom} onDragEnter={setDragTrackTo} onDragEnd={handleTrackDragEnd} />
             ))}
-            {/* 자동 트랙 생성 존 높이 맞춤 */}
-            <div style={{ height: AUTO_TRACK_ZONE_HEIGHT, flexShrink: 0 }} />
+            <div style={{ height: AUTO_ZONE_H, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#555', borderBottom: '1px solid var(--border-secondary, #333)' }}>+ 드롭하여 트랙 생성</div>
           </div>
         </div>
-
-        {/* ═══ 우측: Scroll area (ruler + tracks + overlays) ═══ */}
-        <div
-          style={{
-            flex: 1,
-            overflow: 'auto',
-            position: 'relative',
-          }}
-          ref={scrollRef}
-          tabIndex={-1}
-          onMouseDown={(e) => {
-            const top = e.currentTarget.getBoundingClientRect().top;
-            if (e.clientY < top + RULER_HEIGHT) {
-              handleRulerClick(e);
-            }
-          }}
-        >
-          {/* Ruler (sticky) */}
-          <div
-            style={{
-              position: 'sticky',
-              top: 0,
-              zIndex: RULER_Z_INDEX,
-              background: 'var(--bg-secondary)',
-              borderBottom: '1px solid var(--border)',
-            }}
-          >
+        <div ref={mainScrollRef} onScroll={() => syncScroll('main')} style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
+          <div style={{ position: 'sticky', top: 0, zIndex: 10, height: RULER_H, cursor: 'pointer', background: 'var(--bg-secondary, #1e1e2e)' }} onClick={handleRulerClick}>
             <TimelineRuler pps={pps} duration={project.duration} zoom={zoom} />
           </div>
-
-          {/* Tracks content */}
-          <div
-            style={{
-              position: 'relative',
-              width: totalWidth,
-              minHeight: totalTracksHeight,
-              zIndex: 10,
-            }}
-          >
-            {/* Marker area */}
-            <div style={{ height: MARKER_AREA_HEIGHT }} />
-
-            {/* Track Rows */}
-            {project.tracks.map((t) => (
-              <TrackRow
-                key={t.id}
-                track={t}
-                pps={pps}
-                projectAssets={project.assets}
-                selectedClipId={selectedClipId}
-                onSelectClip={selectClip}
-                onDropClip={(e) => handleDrop(e, t.id)}
-                onDragOverTrack={(e) => e.preventDefault()}
-                onMoveStart={(e, clip) =>
-                  startDrag(e, 'move', clip, t.id)
-                }
-                onTrimLeftStart={(e, clip) =>
-                  startDrag(e, 'trim-left', clip, t.id)
-                }
-                onTrimRightStart={(e, clip) =>
-                  startDrag(e, 'trim-right', clip, t.id)
-                }
-              />
+          <div style={{ position: 'relative', width: totalW, minHeight: totalTrackH + AUTO_ZONE_H }}>
+            {tracks.map(t => (
+              <TrackRow key={t.id} track={t} assets={project.assets} pps={pps} selectedClipId={selectedClipId}
+                onSelectClip={(id) => selectClip(id)} onMoveClip={(e, clipId) => handleMouseDown(e, clipId, t.id, 'move')}
+                onTrimLeft={(e, clipId) => handleMouseDown(e, clipId, t.id, 'trim-left')} onTrimRight={(e, clipId) => handleMouseDown(e, clipId, t.id, 'trim-right')}
+                onDrop={(e) => handleDrop(e, t.id)} onDragOver={handleDragOver} />
             ))}
-
-            {/* 자동 트랙 생성 존 */}
-            <div
-              style={{
-                height: AUTO_TRACK_ZONE_HEIGHT,
-                borderTop: '1px dashed var(--border)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 10,
-                color: 'var(--text-muted)',
-                cursor: 'default',
-                background: 'rgba(124, 92, 252, 0.03)',
-              }}
-              onDrop={(e) => handleDrop(e, '__auto__')}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'copy';
-              }}
-            >
-              ＋ 여기에 드롭하면 새 트랙이 자동 생성됩니다
-            </div>
-          </div>
-
-          {/* Overlays (Markers + Playhead) */}
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: totalWidth,
-              height: '100%',
-              pointerEvents: 'none',
-              zIndex: OVERLAY_Z_INDEX,
-            }}
-          >
-            <MarkerTrack
-              markers={markers}
-              pps={pps}
-              totalWidth={totalWidth}
-            />
+            <div style={{ height: AUTO_ZONE_H, width: totalW, borderTop: '1px dashed #444', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#555' }} onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, '__auto__')}>⊕ 파일을 여기에 드롭하면 새 트랙이 자동 생성됩니다</div>
+            <MarkerTrack markers={markers} pps={pps} totalWidth={totalW} />
             <Playhead pps={pps} />
           </div>
         </div>
       </div>
     </div>
   );
-}
+};
+
+export default TimelinePanel;

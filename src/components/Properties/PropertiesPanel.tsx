@@ -1,8 +1,7 @@
-// src/components/Properties/PropertiesPanel.tsx
-
+/* ─── src/components/Properties/PropertiesPanel.tsx ─── */
 import React from 'react';
 import { useEditorStore } from '@/stores/editorStore';
-import type { BlendMode } from '@/types/project';
+import { BlendMode } from '@/types/project';
 
 const PANEL_MIN_WIDTH = 220;
 const HEADER_PADDING_V = 8;
@@ -15,7 +14,7 @@ const SECTION_TITLE_LETTER_SPACING = 1;
 const ROW_MARGIN_BOTTOM = 6;
 const LABEL_FONT_SIZE = 11;
 const INPUT_WIDTH = 64;
-const SELECT_WIDTH = 100;
+const SELECT_WIDTH = 120;
 const INPUT_FONT_SIZE = 11;
 const EMPTY_PADDING_TOP = 40;
 const EMPTY_FONT_SIZE = 12;
@@ -23,17 +22,10 @@ const AI_BTN_FONT_SIZE = 11;
 const AI_BTN_PADDING_V = 6;
 
 const VALID_BLEND_MODES: readonly BlendMode[] = [
-  'normal',
-  'multiply',
-  'screen',
-  'overlay',
-  'add',
-  'difference',
+  'normal', 'multiply', 'screen', 'overlay',
+  'darken', 'lighten', 'color-dodge', 'color-burn',
+  'hard-light', 'soft-light', 'difference', 'exclusion',
 ];
-
-function isValidBlendMode(value: string): value is BlendMode {
-  return VALID_BLEND_MODES.includes(value as BlendMode);
-}
 
 const AI_TOOLS = [
   { icon: '🤖', label: 'Background Remove' },
@@ -133,6 +125,9 @@ export function PropertiesPanel(): React.ReactElement {
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const project = useEditorStore((s) => s.project);
   const updateClip = useEditorStore((s) => s.updateClip);
+  const getSkillConfig = useEditorStore((s) => s.getSkillConfig);
+
+  const config = getSkillConfig();
 
   const clip = selectedClipId !== null
     ? project.tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId)
@@ -160,12 +155,6 @@ export function PropertiesPanel(): React.ReactElement {
     });
   };
 
-  const handleScaleChange = (value: number) => {
-    updateClip(clip.id, {
-      transform: { ...clip.transform, scaleX: value, scaleY: value },
-    });
-  };
-
   const handleOpacityChange = (value: number) => {
     updateClip(clip.id, { opacity: value });
   };
@@ -173,14 +162,7 @@ export function PropertiesPanel(): React.ReactElement {
   const handleBlendModeChange = (
     e: React.ChangeEvent<HTMLSelectElement>,
   ) => {
-    const value = e.target.value;
-    if (isValidBlendMode(value)) {
-      updateClip(clip.id, { blendMode: value });
-    }
-  };
-
-  const handleSpeedChange = (value: number) => {
-    updateClip(clip.id, { speed: value });
+    updateClip(clip.id, { blendMode: e.target.value as BlendMode });
   };
 
   const parseNum = (raw: string, fallback: number): number => {
@@ -188,7 +170,6 @@ export function PropertiesPanel(): React.ReactElement {
     return isNaN(parsed) ? fallback : parsed;
   };
 
-  const clipDuration = clip.timelineEnd - clip.timelineStart;
   const displayName = asset?.name ?? 'Clip';
 
   return (
@@ -217,11 +198,11 @@ export function PropertiesPanel(): React.ReactElement {
             <span style={styles.label}>Scale</span>
             <input
               type="number"
-              step="0.1"
+              step="0.01"
               style={styles.input}
-              value={clip.transform.scaleX}
+              value={clip.transform.scale}
               onChange={(e) =>
-                handleScaleChange(parseNum(e.target.value, 1))
+                handleTransformChange('scale', parseNum(e.target.value, 1))
               }
             />
           </div>
@@ -232,10 +213,7 @@ export function PropertiesPanel(): React.ReactElement {
               style={styles.input}
               value={clip.transform.rotation}
               onChange={(e) =>
-                handleTransformChange(
-                  'rotation',
-                  parseNum(e.target.value, 0),
-                )
+                handleTransformChange('rotation', parseNum(e.target.value, 0))
               }
             />
           </div>
@@ -258,20 +236,22 @@ export function PropertiesPanel(): React.ReactElement {
               }
             />
           </div>
-          <div style={styles.row}>
-            <span style={styles.label}>Blend</span>
-            <select
-              style={styles.select}
-              value={clip.blendMode}
-              onChange={handleBlendModeChange}
-            >
-              {VALID_BLEND_MODES.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
+          {config.showBlendModes && (
+            <div style={styles.row}>
+              <span style={styles.label}>Blend</span>
+              <select
+                style={styles.select}
+                value={clip.blendMode}
+                onChange={handleBlendModeChange}
+              >
+                {VALID_BLEND_MODES.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div style={styles.row}>
             <span style={styles.label}>Speed</span>
             <input
@@ -282,7 +262,7 @@ export function PropertiesPanel(): React.ReactElement {
               style={styles.input}
               value={clip.speed}
               onChange={(e) =>
-                handleSpeedChange(parseNum(e.target.value, 1))
+                updateClip(clip.id, { speed: parseNum(e.target.value, 1) })
               }
             />
           </div>
@@ -294,19 +274,19 @@ export function PropertiesPanel(): React.ReactElement {
           <div style={styles.row}>
             <span style={styles.label}>Start</span>
             <span style={styles.valueLabel}>
-              {clip.timelineStart.toFixed(2)}s
-            </span>
-          </div>
-          <div style={styles.row}>
-            <span style={styles.label}>End</span>
-            <span style={styles.valueLabel}>
-              {clip.timelineEnd.toFixed(2)}s
+              {clip.startTime.toFixed(2)}s
             </span>
           </div>
           <div style={styles.row}>
             <span style={styles.label}>Duration</span>
             <span style={styles.valueLabel}>
-              {clipDuration.toFixed(2)}s
+              {clip.duration.toFixed(2)}s
+            </span>
+          </div>
+          <div style={styles.row}>
+            <span style={styles.label}>In-Point</span>
+            <span style={styles.valueLabel}>
+              {clip.inPoint.toFixed(2)}s
             </span>
           </div>
         </div>

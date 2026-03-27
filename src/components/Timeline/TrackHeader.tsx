@@ -1,353 +1,287 @@
-// src/components/Timeline/TrackHeader.tsx
-
-import React from 'react';
+/* ─── src/components/Timeline/TrackHeader.tsx ─── */
+import React, { useState, useRef, useEffect } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
-import { SKILL_CONFIGS } from '@/types/project';
-import type { Track, TrackType } from '@/types/project';
+import { Track, SKILL_CONFIGS } from '@/types/project';
+
+/* ========== 상수 ========== */
+const RESIZE_HANDLE = 6;
+const MIN_TRACK_H = 24;
+const MAX_TRACK_H = 200;
+const BTN = 22;
+const GAP = 3;
+const FONT_NAME = 11;
+const FONT_BTN = 13;
+const MENU_W = 180;
+const COLOR_SWATCH = 16;
+
+const TYPE_ICON: Record<string, string> = {
+  video: '🎬', audio: '🔊', text: '🔤', effect: '✨',
+};
+
+const TRACK_COLOR_PALETTE = [
+  '#4A90D9', '#50C878', '#FFB347', '#DA70D6',
+  '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4',
+  '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F',
+  '#BB8FCE', '#85C1E9', '#F1948A', '#82E0AA',
+];
 
 interface TrackHeaderProps {
   track: Track;
+  index?: number;
+  trackCount?: number;
+  onDragStart?: (idx: number) => void;
+  onDragEnter?: (idx: number) => void;
+  onDragEnd?: () => void;
 }
 
-const MIN_TRACK_HEIGHT = 30;
-const RESIZE_HANDLE_HEIGHT = 4;
-const ICON_FONT_SIZE = 13;
-const LABEL_FONT_SIZE = 10;
-const CONTROL_FONT_SIZE = 12;
-const CONTROL_PADDING = 2;
-const CONTROL_GAP = 4;
-const SECTION_GAP = 6;
-const CONTEXT_MENU_WIDTH = 160;
+export const TrackHeader: React.FC<TrackHeaderProps> = ({
+  track,
+  index = 0,
+  trackCount = 1,
+  onDragStart,
+  onDragEnter,
+  onDragEnd,
+}) => {
+  const store = useEditorStore();
+  const { updateTrack, removeTrack, moveTrack, duplicateTrack, pushUndo, skillLevel, project } = store;
 
-const ICON_BY_TYPE: Record<TrackType, string> = {
-  video: '🎬',
-  audio: '🎵',
-  text: '✏️',
-  effect: '✨',
-};
+  /* Phase T-2: Safe Config Loading */
+  const config = SKILL_CONFIGS[skillLevel] ?? SKILL_CONFIGS.beginner;
 
-const MUTE_ICONS = { on: '🔇', off: '🔊' } as const;
-const LOCK_ICONS = { on: '🔒', off: '🔓' } as const;
-const VISIBLE_ICONS = { on: '👁️', off: '🚫' } as const;
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(track.name);
+  const [showColors, setShowColors] = useState(false);
+  const [showHeights, setShowHeights] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-const controlBtnBase: React.CSSProperties = {
-  background: 'none',
-  border: 'none',
-  cursor: 'pointer',
-  padding: CONTROL_PADDING,
-  fontSize: CONTROL_FONT_SIZE,
-};
-
-const contextMenuStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: '80%',
-  left: 20,
-  width: CONTEXT_MENU_WIDTH,
-  background: 'var(--bg-surface)',
-  border: '1px solid var(--border-light)',
-  borderRadius: 6,
-  padding: 4,
-  zIndex: 1000,
-  boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-};
-
-const contextItemStyle: React.CSSProperties = {
-  display: 'block',
-  width: '100%',
-  padding: '6px 10px',
-  fontSize: 11,
-  color: 'var(--text-primary)',
-  background: 'transparent',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  textAlign: 'left',
-  fontFamily: 'inherit',
-};
-
-const contextItemDangerStyle: React.CSSProperties = {
-  ...contextItemStyle,
-  color: 'var(--danger)',
-};
-
-export function TrackHeader({ track }: TrackHeaderProps): React.ReactElement {
-  const updateTrack = useEditorStore((s) => s.updateTrack);
-  const removeTrack = useEditorStore((s) => s.removeTrack);
-  const moveTrack = useEditorStore((s) => s.moveTrack);
-  const duplicateTrack = useEditorStore((s) => s.duplicateTrack);
-  const skillLevel = useEditorStore((s) => s.skillLevel);
-  const tracks = useEditorStore((s) => s.project.tracks);
-  const pushUndo = useEditorStore((s) => s.pushUndo);
-
-  const [showMenu, setShowMenu] = React.useState(false);
-  const [isEditing, setIsEditing] = React.useState(false);
-  const [editName, setEditName] = React.useState(track.name);
-  const menuRef = React.useRef<HTMLDivElement>(null);
-
-  const config = SKILL_CONFIGS[skillLevel];
-
-  // 외부 클릭 시 메뉴 닫기
-  React.useEffect(() => {
-    if (!showMenu) return;
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current !== null && !menuRef.current.contains(e.target as Node)) {
-        setShowMenu(false);
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setCtxMenu(null);
+        setShowColors(false);
+        setShowHeights(false);
       }
     };
-    const rafId = requestAnimationFrame(() => {
-      document.addEventListener('mousedown', handleClick);
-    });
-    return () => {
-      cancelAnimationFrame(rafId);
-      document.removeEventListener('mousedown', handleClick);
-    };
-  }, [showMenu]);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [ctxMenu]);
 
-  const handleResizeStart = (startY: number) => {
-    const onMove = (e: MouseEvent) => {
-      const newHeight = Math.max(
-        MIN_TRACK_HEIGHT,
-        track.height + (e.clientY - startY),
-      );
-      updateTrack(track.id, { height: newHeight });
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  const commitRename = () => {
+    const trimmed = editName.trim();
+    if (trimmed && trimmed !== track.name) {
+      pushUndo('트랙 이름 변경');
+      updateTrack(track.id, { name: trimmed });
+    }
+    setEditing(false);
   };
 
   const handleDelete = () => {
-    setShowMenu(false);
-    if (tracks.length <= 1) {
-      window.alert('최소 1개 트랙은 유지해야 합니다.');
-      return;
+    setCtxMenu(null);
+    const totalTracks = project?.tracks?.length ?? trackCount;
+    if (totalTracks <= 1) { alert('최소 1개 트랙이 필요합니다.'); return; }
+    if (track.clips.length > 0) {
+      if (!confirm(`"${track.name}" 트랙에 ${track.clips.length}개 클립이 있습니다. 삭제하시겠습니까?`)) return;
     }
-    const hasClips = track.clips.length > 0;
-    if (hasClips) {
-      const ok = window.confirm(
-        `"${track.name}" 트랙에 ${track.clips.length}개 클립이 있습니다.\n정말 삭제하시겠습니까?`,
-      );
-      if (!ok) return;
-    }
-    pushUndo('Delete track');
+    pushUndo('트랙 삭제');
     removeTrack(track.id);
   };
 
-  const handleRename = () => {
-    setShowMenu(false);
-    setIsEditing(true);
-    setEditName(track.name);
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = track.height;
+    const onMove = (ev: MouseEvent) => {
+      const newH = Math.max(MIN_TRACK_H, Math.min(MAX_TRACK_H, startH + ev.clientY - startY));
+      updateTrack(track.id, { height: newH, heightPreset: 'custom' as any });
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
   };
 
-  const commitRename = () => {
-    setIsEditing(false);
-    const trimmed = editName.trim();
-    if (trimmed.length > 0 && trimmed !== track.name) {
-      updateTrack(track.id, { name: trimmed });
+  const handleColorSelect = (color: string) => {
+    pushUndo('트랙 컬러 변경');
+    if (typeof (store as any).setTrackColor === 'function') {
+      (store as any).setTrackColor(track.id, color);
+    } else {
+      updateTrack(track.id, { color } as any);
     }
+    setCtxMenu(null);
   };
 
-  const icon = ICON_BY_TYPE[track.type] ?? '📌';
+  const handleHeightPreset = (preset: string) => {
+    const PRESETS: Record<string, number> = { S: 30, M: 48, L: 72, XL: 120 };
+    pushUndo('트랙 높이 변경');
+    if (typeof (store as any).setTrackHeightPreset === 'function') {
+      (store as any).setTrackHeightPreset(track.id, preset);
+    } else {
+      updateTrack(track.id, { height: PRESETS[preset] ?? 48, heightPreset: preset } as any);
+    }
+    setCtxMenu(null);
+  };
+
+  const handleSoloToggle = () => {
+    if (typeof (store as any).toggleSolo === 'function') {
+      (store as any).toggleSolo(track.id);
+    } else {
+      updateTrack(track.id, { solo: !track.solo } as any);
+    }
+    setCtxMenu(null);
+  };
+
+  const trackColor = (track as any).color || '#4A90D9';
+  const showSolo = config.showSoloMode && track.type === 'audio';
+  const canReorder = config.showTrackReorder;
 
   return (
-    <div
-      style={{
-        position: 'relative',
-        height: track.height,
-        borderBottom: '1px solid var(--border)',
-        padding: '0 8px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        fontSize: LABEL_FONT_SIZE,
-        color: 'var(--text-secondary)',
-      }}
-      onContextMenu={e => { e.preventDefault(); setShowMenu(true); }}
-    >
+    <>
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: SECTION_GAP,
-          flex: 1,
-          overflow: 'hidden',
+          display: 'flex', flexDirection: 'column', height: track.height, boxSizing: 'border-box',
+          borderBottom: '1px solid var(--border-secondary, #333)',
+          background: 'var(--bg-secondary, #1e1e2e)',
+          position: 'relative', overflow: 'hidden', userSelect: 'none',
         }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setCtxMenu({ x: e.clientX, y: e.clientY });
+          setShowColors(false);
+          setShowHeights(false);
+        }}
+        draggable={!!canReorder}
+        onDragStart={(e) => {
+          if (!canReorder) { e.preventDefault(); return; }
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', String(index));
+          onDragStart?.(index);
+        }}
+        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+        onDragEnter={() => onDragEnter?.(index)}
+        onDragEnd={() => onDragEnd?.()}
       >
-        <span style={{ fontSize: ICON_FONT_SIZE }}>{icon}</span>
-        {isEditing ? (
-          <input
-            autoFocus
-            value={editName}
-            onChange={e => setEditName(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={e => {
-              if (e.key === 'Enter') commitRename();
-              if (e.key === 'Escape') setIsEditing(false);
-            }}
-            style={{
-              flex: 1,
-              fontSize: LABEL_FONT_SIZE,
-              background: 'var(--bg-deep)',
-              border: '1px solid var(--accent)',
-              borderRadius: 3,
-              color: 'var(--text-primary)',
-              padding: '1px 4px',
-              outline: 'none',
-              fontFamily: 'inherit',
-            }}
-          />
-        ) : (
-          <span
-            style={{
-              flex: 1,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              cursor: 'default',
-            }}
-            onDoubleClick={handleRename}
-          >
-            {track.name}
-          </span>
-        )}
-      </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: GAP, padding: '2px 4px', flex: '0 0 auto' }}>
+          {config.showTrackColor && (
+            <div style={{ width: 3, alignSelf: 'stretch', background: trackColor, borderRadius: 2, flexShrink: 0 }} />
+          )}
+          <span style={{ fontSize: 14, flexShrink: 0 }}>{TYPE_ICON[track.type] ?? '🎬'}</span>
+          <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+            {editing ? (
+              <input
+                ref={inputRef}
+                style={{
+                  fontSize: FONT_NAME, color: '#fff', background: 'var(--bg-tertiary, #333)',
+                  border: '1px solid var(--accent, #6c5ce7)', borderRadius: 3, padding: '0 2px',
+                  width: '100%', outline: 'none',
+                }}
+                value={editName}
+                onChange={e => setEditName(e.target.value)}
+                onBlur={commitRename}
+                onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditing(false); }}
+              />
+            ) : (
+              <div
+                style={{ fontSize: FONT_NAME, color: '#ccc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                onDoubleClick={() => { setEditName(track.name); setEditing(true); }}
+                title={track.name}
+              >
+                {track.name}
+              </div>
+            )}
+          </div>
+        </div>
 
-      <div style={{ display: 'flex', gap: CONTROL_GAP, alignItems: 'center' }}>
-        <button
-          style={{
-            ...controlBtnBase,
-            opacity: track.muted ? 0.3 : 1,
-            filter: track.muted ? 'grayscale(1)' : 'none',
-          }}
-          onClick={() => updateTrack(track.id, { muted: !track.muted })}
-          title="Mute/Unmute"
-        >
-          {track.muted ? MUTE_ICONS.on : MUTE_ICONS.off}
-        </button>
-        <button
-          style={{
-            ...controlBtnBase,
-            opacity: track.locked ? 1 : 0.5,
-          }}
-          onClick={() => updateTrack(track.id, { locked: !track.locked })}
-          title="Lock/Unlock"
-        >
-          {track.locked ? LOCK_ICONS.on : LOCK_ICONS.off}
-        </button>
-        <button
-          style={{
-            ...controlBtnBase,
-            opacity: track.visible ? 1 : 0.4,
-          }}
-          onClick={() => updateTrack(track.id, { visible: !track.visible })}
-          title="Show/Hide"
-        >
-          {track.visible ? VISIBLE_ICONS.on : VISIBLE_ICONS.off}
-        </button>
-      </div>
-
-      {/* 우클릭 컨텍스트 메뉴 */}
-      {showMenu && (
-        <div ref={menuRef} style={contextMenuStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: GAP, padding: '0 4px 2px', flexWrap: 'wrap' }}>
           <button
-            style={contextItemStyle}
-            onClick={handleRename}
-            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            ✏️ 이름 변경
-          </button>
-          <button
-            style={contextItemStyle}
-            onClick={() => {
-              setShowMenu(false);
-              updateTrack(track.id, { locked: !track.locked });
+            style={{
+              width: BTN, height: BTN, fontSize: FONT_BTN, border: 'none', borderRadius: 3,
+              background: track.muted ? 'var(--accent, #6c5ce7)' : 'transparent',
+              color: track.muted ? '#fff' : '#999', cursor: 'pointer', padding: 0,
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+            onClick={() => updateTrack(track.id, { muted: !track.muted })}
           >
-            {track.locked ? '🔓 잠금 해제' : '🔒 잠금'}
+            {track.muted ? '🔇' : '🔊'}
           </button>
+          {showSolo && (
+            <button
+              style={{
+                width: BTN, height: BTN, fontSize: FONT_BTN, border: 'none', borderRadius: 3,
+                background: (track as any).solo ? 'var(--accent, #6c5ce7)' : 'transparent',
+                color: (track as any).solo ? '#fff' : '#999', cursor: 'pointer', padding: 0,
+              }}
+              onClick={handleSoloToggle}
+            >
+              {(track as any).solo ? '🎧' : '🎵'}
+            </button>
+          )}
           <button
-            style={contextItemStyle}
-            onClick={() => {
-              setShowMenu(false);
-              updateTrack(track.id, { muted: !track.muted });
+            style={{
+              width: BTN, height: BTN, fontSize: FONT_BTN, border: 'none', borderRadius: 3,
+              background: track.locked ? 'var(--accent, #6c5ce7)' : 'transparent',
+              color: track.locked ? '#fff' : '#999', cursor: 'pointer', padding: 0,
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+            onClick={() => updateTrack(track.id, { locked: !track.locked })}
           >
-            {track.muted ? '🔊 음소거 해제' : '🔇 음소거'}
+            {track.locked ? '🔒' : '🔓'}
           </button>
           <button
-            style={contextItemStyle}
-            onClick={() => {
-              setShowMenu(false);
-              updateTrack(track.id, { visible: !track.visible });
+            style={{
+              width: BTN, height: BTN, fontSize: FONT_BTN, border: 'none', borderRadius: 3,
+              background: !track.visible ? 'var(--accent, #6c5ce7)' : 'transparent',
+              color: !track.visible ? '#fff' : '#999', cursor: 'pointer', padding: 0,
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+            onClick={() => updateTrack(track.id, { visible: !track.visible })}
           >
-            {track.visible ? '🚫 숨기기' : '👁️ 표시'}
-          </button>
-          <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
-          <button
-            style={contextItemStyle}
-            onClick={() => { setShowMenu(false); moveTrack(track.id, 'up'); }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            ↑ 트랙을 위로 이동
-          </button>
-          <button
-            style={contextItemStyle}
-            onClick={() => { setShowMenu(false); moveTrack(track.id, 'down'); }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            ↓ 트랙을 아래로 이동
-          </button>
-          <button
-            style={contextItemStyle}
-            onClick={() => { setShowMenu(false); duplicateTrack(track.id); }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            👯 트랙 복제
-          </button>
-          <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
-          <button
-            style={contextItemDangerStyle}
-            onClick={handleDelete}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(244,67,54,0.12)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            🗑️ 트랙 삭제
+            {track.visible ? '👁' : '👁🗨'}
           </button>
         </div>
-      )}
+        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: RESIZE_HANDLE, cursor: 'row-resize', zIndex: 2 }} onMouseDown={handleResizeStart} />
+      </div>
 
-      {/* 리사이즈 핸들 */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: RESIZE_HANDLE_HEIGHT,
-          cursor: 'ns-resize',
-          background: 'transparent',
-          zIndex: 1,
-        }}
-        onMouseDown={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          handleResizeStart(e.clientY);
-        }}
-      />
-    </div>
+      {ctxMenu && (
+        <div ref={menuRef} style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y, width: MENU_W, background: 'var(--bg-tertiary, #2a2a3c)', border: '1px solid var(--border-primary, #444)', borderRadius: 6, padding: '4px 0', zIndex: 1000, boxShadow: '0 4px 16px rgba(0,0,0,.5)' }}>
+          <button style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', fontSize: 12, color: '#ddd', background: 'transparent', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => { setCtxMenu(null); setEditName(track.name); setEditing(true); }}>✏️ 이름 변경</button>
+          {config.showTrackColor && (
+            <>
+              <button style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', fontSize: 12, color: '#ddd', background: 'transparent', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => setShowColors(!showColors)}>🎨 트랙 컬러 {showColors ? '▲' : '▼'}</button>
+              {showColors && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '6px 12px' }}>
+                  {TRACK_COLOR_PALETTE.map(c => <div key={c} style={{ width: COLOR_SWATCH, height: COLOR_SWATCH, borderRadius: 3, background: c, border: c === trackColor ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }} onClick={() => handleColorSelect(c)} />)}
+                </div>
+              )}
+            </>
+          )}
+          {config.showTrackHeightPresets && (
+            <>
+              <button style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', fontSize: 12, color: '#ddd', background: 'transparent', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => setShowHeights(!showHeights)}>📏 트랙 높이 {showHeights ? '▲' : '▼'}</button>
+              {showHeights && (
+                <div style={{ display: 'flex', gap: 4, padding: '6px 12px' }}>
+                  {['S', 'M', 'L', 'XL'].map(p => <button key={p} style={{ padding: '2px 8px', fontSize: 11, borderRadius: 3, border: 'none', background: (track as any).heightPreset === p ? 'var(--accent, #6c5ce7)' : 'var(--bg-secondary, #1e1e2e)', color: (track as any).heightPreset === p ? '#fff' : '#aaa', cursor: 'pointer' }} onClick={() => handleHeightPreset(p)}>{p}</button>)}
+                </div>
+              )}
+            </>
+          )}
+          <div style={{ height: 1, background: 'var(--border-secondary, #333)', margin: '4px 0' }} />
+          <button style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', fontSize: 12, color: index === 0 ? '#555' : '#ddd', background: 'transparent', border: 'none', width: '100%', textAlign: 'left', cursor: index === 0 ? 'default' : 'pointer' }} onClick={() => { if (index > 0) { pushUndo('트랙 위로 이동'); moveTrack(track.id, 'up'); setCtxMenu(null); } }}>⬆️ 위로 이동</button>
+          <button style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', fontSize: 12, color: index >= trackCount - 1 ? '#555' : '#ddd', background: 'transparent', border: 'none', width: '100%', textAlign: 'left', cursor: index >= trackCount - 1 ? 'default' : 'pointer' }} onClick={() => { if (index < trackCount - 1) { pushUndo('트랙 아래로 이동'); moveTrack(track.id, 'down'); setCtxMenu(null); } }}>⬇️ 아래로 이동</button>
+          {config.showTrackDuplicate && (
+            <button style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', fontSize: 12, color: '#ddd', background: 'transparent', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => { pushUndo('트랙 복제'); duplicateTrack(track.id); setCtxMenu(null); }}>📋 트랙 복제</button>
+          )}
+          <div style={{ height: 1, background: 'var(--border-secondary, #333)', margin: '4px 0' }} />
+          <button style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', fontSize: 12, color: '#ff6b6b', background: 'transparent', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={handleDelete}>🗑️ 트랙 삭제</button>
+        </div>
+      )}
+    </>
   );
-}
+};
+
+// export default TrackHeader;

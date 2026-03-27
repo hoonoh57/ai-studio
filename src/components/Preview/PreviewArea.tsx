@@ -1,5 +1,4 @@
-// src/components/Preview/PreviewArea.tsx
-
+/* ─── src/components/Preview/PreviewArea.tsx ─── */
 import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import type { Clip, Asset, Track } from '@/types/project';
@@ -7,17 +6,7 @@ import type { Clip, Asset, Track } from '@/types/project';
 const CONTROLS_HEIGHT = 40;
 const MIN_AREA_HEIGHT = 200;
 const CONTROL_BTN_FONT_SIZE = 16;
-const CONTROL_BTN_PADDING_V = 4;
-const CONTROL_BTN_PADDING_H = 8;
-const CONTROL_BTN_RADIUS = 4;
-const CONTROL_GAP = 12;
 const TIMECODE_FONT_SIZE = 12;
-const TIMECODE_MIN_WIDTH = 80;
-const PLACEHOLDER_FONT_SIZE = 13;
-const AUDIO_ICON_FONT_SIZE = 40;
-const AUDIO_LABEL_FONT_SIZE = 13;
-const AUDIO_LABEL_MARGIN_TOP = 10;
-const SEEK_TOLERANCE = 0.1;
 
 interface ActiveClipData {
   readonly clip: Clip;
@@ -30,11 +19,7 @@ function formatTimecode(sec: number, fps: number): string {
   const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
   const f = Math.floor((sec % 1) * fps);
-  const hh = h.toString().padStart(2, '0');
-  const mm = m.toString().padStart(2, '0');
-  const ss = s.toString().padStart(2, '0');
-  const ff = f.toString().padStart(2, '0');
-  return `${hh}:${mm}:${ss}:${ff}`;
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(2, '0')}`;
 }
 
 const styles = {
@@ -59,10 +44,6 @@ const styles = {
     maxHeight: '100%',
     objectFit: 'contain',
   } as React.CSSProperties,
-  placeholder: {
-    color: 'var(--text-muted)',
-    fontSize: PLACEHOLDER_FONT_SIZE,
-  } as React.CSSProperties,
   controls: {
     height: CONTROLS_HEIGHT,
     background: 'var(--bg-secondary)',
@@ -70,7 +51,7 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: CONTROL_GAP,
+    gap: 12,
   } as React.CSSProperties,
   controlBtn: {
     background: 'transparent',
@@ -78,27 +59,18 @@ const styles = {
     color: 'var(--text-primary)',
     fontSize: CONTROL_BTN_FONT_SIZE,
     cursor: 'pointer',
-    padding: `${CONTROL_BTN_PADDING_V}px ${CONTROL_BTN_PADDING_H}px`,
-    borderRadius: CONTROL_BTN_RADIUS,
+    padding: '4px 8px',
+    borderRadius: 4,
   } as React.CSSProperties,
   timecode: {
     fontFamily: 'var(--font-mono)',
     fontSize: TIMECODE_FONT_SIZE,
     color: 'var(--text-secondary)',
-    minWidth: TIMECODE_MIN_WIDTH,
+    minWidth: 80,
     textAlign: 'center',
   } as React.CSSProperties,
-  audioPreview: {
-    textAlign: 'center',
-  } as React.CSSProperties,
-  audioIcon: {
-    fontSize: AUDIO_ICON_FONT_SIZE,
-  } as React.CSSProperties,
-  audioLabel: {
-    fontSize: AUDIO_LABEL_FONT_SIZE,
-    color: 'var(--text-secondary)',
-    marginTop: AUDIO_LABEL_MARGIN_TOP,
-  } as React.CSSProperties,
+  audioPreview: { textAlign: 'center' } as React.CSSProperties,
+  audioIcon: { fontSize: 40 } as React.CSSProperties,
 } as const;
 
 export function PreviewArea(): React.ReactElement {
@@ -109,192 +81,115 @@ export function PreviewArea(): React.ReactElement {
   const setCurrentTime = useEditorStore((s) => s.setCurrentTime);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const animRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
 
-  // ── Find active clip at currentTime ──
+  // Active clip loop: find top-most visible track with a clip at currentTime
   const activeClip: ActiveClipData | null = useMemo(() => {
-    for (const track of project.tracks) {
+    // Reverse order to check higher tracks first (layering)
+    const sortedTracks = [...project.tracks].sort((a, b) => b.order - a.order);
+    for (const track of sortedTracks) {
       if (!track.visible) continue;
-      if (
-        track.type !== 'video' &&
-        track.type !== 'text' &&
-        track.type !== 'audio'
-      ) {
-        continue;
-      }
       for (const clip of track.clips) {
-        if (
-          currentTime >= clip.timelineStart &&
-          currentTime < clip.timelineEnd
-        ) {
+        if (currentTime >= clip.startTime && currentTime < clip.startTime + clip.duration) {
           const asset = project.assets.find((a) => a.id === clip.assetId);
-          if (asset !== undefined) {
-            return { clip, asset, track };
-          }
+          if (asset) return { clip, asset, track };
         }
       }
     }
     return null;
   }, [project.tracks, project.assets, currentTime]);
 
-  // ── Playback loop ──
+  // Playback Loop
   useEffect(() => {
-    if (!isPlaying) {
-      cancelAnimationFrame(animRef.current);
-      return;
-    }
-
+    if (!isPlaying) return;
     lastTimeRef.current = performance.now();
+    let frameId: number;
 
     const tick = (now: number) => {
       const dt = (now - lastTimeRef.current) / 1000;
       lastTimeRef.current = now;
-      const state = useEditorStore.getState();
 
-      // Get speed from active clip at current time
+      const state = useEditorStore.getState();
+      // Find current clip speed
       let speed = 1;
-      for (const track of state.project.tracks) {
-        if (!track.visible) continue;
-        for (const clip of track.clips) {
-          if (
-            state.currentTime >= clip.timelineStart &&
-            state.currentTime < clip.timelineEnd
-          ) {
-            speed = clip.speed;
-            break;
-          }
-        }
-        if (speed !== 1) break;
+      const sorted = [...state.project.tracks].sort((a, b) => b.order - a.order);
+      for (const t of sorted) {
+        if (!t.visible) continue;
+        const c = t.clips.find(cl => state.currentTime >= cl.startTime && state.currentTime < cl.startTime + cl.duration);
+        if (c) { speed = c.speed; break; }
       }
 
       const next = state.currentTime + dt * speed;
-
       if (next >= state.project.duration) {
         state.setCurrentTime(0);
-        state.setIsPlaying(false);
+        state.togglePlay();
         return;
       }
-
       state.setCurrentTime(next);
-      animRef.current = requestAnimationFrame(tick);
+      frameId = requestAnimationFrame(tick);
     };
-
-    animRef.current = requestAnimationFrame(tick);
-
-    return () => cancelAnimationFrame(animRef.current);
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
   }, [isPlaying]);
 
-  // ── Sync video element ──
+  // Sync Video Element
   useEffect(() => {
     const video = videoRef.current;
-    if (video === null || activeClip === null) return;
+    if (!video || !activeClip) return;
+    if (activeClip.asset.type !== 'video' && activeClip.asset.type !== 'audio') return;
 
-    const clipTime =
-      currentTime - activeClip.clip.timelineStart + activeClip.clip.sourceStart;
+    const relTime = currentTime - activeClip.clip.startTime;
+    const seekTime = activeClip.clip.inPoint + relTime;
 
     video.playbackRate = activeClip.clip.speed;
-
-    if (Math.abs(video.currentTime - clipTime) > SEEK_TOLERANCE) {
-      video.currentTime = clipTime;
+    if (Math.abs(video.currentTime - seekTime) > 0.05) {
+      video.currentTime = seekTime;
     }
-
-    if (isPlaying && video.paused) {
-      video.play().catch(() => undefined);
-    }
-    if (!isPlaying && !video.paused) {
-      video.pause();
-    }
+    if (isPlaying && video.paused) video.play().catch(() => {});
+    if (!isPlaying && !video.paused) video.pause();
   }, [currentTime, isPlaying, activeClip]);
 
-  // ── Frame step ──
-  const stepFrame = useCallback(
-    (dir: number) => {
-      setCurrentTime(currentTime + dir / project.fps);
-    },
-    [currentTime, project.fps, setCurrentTime],
-  );
+  const stepFrame = useCallback((dir: number) => {
+    setCurrentTime(currentTime + dir / project.fps);
+  }, [currentTime, project.fps, setCurrentTime]);
 
-  // ── Build transform style ──
-  const mediaTransform =
-    activeClip !== null
-      ? `translate(${activeClip.clip.transform.x}px, ${activeClip.clip.transform.y}px) scale(${activeClip.clip.transform.scaleX}) rotate(${activeClip.clip.transform.rotation}deg)`
-      : '';
+  const transformStyle = activeClip ? {
+    opacity: activeClip.clip.opacity,
+    transform: `translate(${activeClip.clip.transform.x}px, ${activeClip.clip.transform.y}px) scale(${activeClip.clip.transform.scale}) rotate(${activeClip.clip.transform.rotation}deg)`,
+    mixBlendMode: activeClip.clip.blendMode as any,
+  } : {};
 
   return (
     <div style={styles.area}>
       <div style={styles.canvas}>
-        {activeClip !== null ? (
+        {activeClip ? (
           activeClip.asset.type === 'video' ? (
             <video
               ref={videoRef}
               src={activeClip.asset.src}
-              style={{
-                ...styles.media,
-                opacity: activeClip.clip.opacity,
-                transform: mediaTransform,
-              }}
+              style={{ ...styles.media, ...transformStyle }}
               muted={activeClip.track.muted}
             />
           ) : activeClip.asset.type === 'audio' ? (
             <div style={styles.audioPreview}>
               <div style={styles.audioIcon}>🎵</div>
-              <div style={styles.audioLabel}>{activeClip.asset.name}</div>
-              <video
-                ref={videoRef}
-                src={activeClip.asset.src}
-                style={{ display: 'none' }}
-                muted={activeClip.track.muted}
-              />
+              <div style={{ fontSize: 13, color: '#aaa', marginTop: 10 }}>{activeClip.asset.name}</div>
+              <video ref={videoRef} src={activeClip.asset.src} style={{ display: 'none' }} muted={activeClip.track.muted} />
             </div>
           ) : (
-            <img
-              src={activeClip.asset.src}
-              style={{
-                ...styles.media,
-                opacity: activeClip.clip.opacity,
-                transform: mediaTransform,
-              }}
-              alt=""
-            />
+            <img src={activeClip.asset.src} style={{ ...styles.media, ...transformStyle }} alt="" />
           )
         ) : (
-          <span style={styles.placeholder}>No clip at current time</span>
+          <span style={{ color: '#555', fontSize: 13 }}>No clip at current time</span>
         )}
       </div>
 
       <div style={styles.controls}>
-        <button
-          style={styles.controlBtn}
-          onClick={() => setCurrentTime(0)}
-          title="Home"
-        >
-          ⏮
-        </button>
-        <button
-          style={styles.controlBtn}
-          onClick={() => stepFrame(-1)}
-          title="Previous Frame"
-        >
-          ⏪
-        </button>
-        <button
-          style={styles.controlBtn}
-          onClick={togglePlay}
-          title={isPlaying ? 'Pause' : 'Play'}
-        >
-          {isPlaying ? '⏸' : '▶'}
-        </button>
-        <button
-          style={styles.controlBtn}
-          onClick={() => stepFrame(1)}
-          title="Next Frame"
-        >
-          ⏩
-        </button>
-        <span style={styles.timecode}>
-          {formatTimecode(currentTime, project.fps)}
-        </span>
+        <button style={styles.controlBtn} onClick={() => setCurrentTime(0)}>⏮</button>
+        <button style={styles.controlBtn} onClick={() => stepFrame(-1)}>⏪</button>
+        <button style={styles.controlBtn} onClick={togglePlay}>{isPlaying ? '⏸' : '▶'}</button>
+        <button style={styles.controlBtn} onClick={() => stepFrame(1)}>⏩</button>
+        <span style={styles.timecode}>{formatTimecode(currentTime, project.fps)}</span>
       </div>
     </div>
   );

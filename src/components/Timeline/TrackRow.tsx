@@ -1,71 +1,81 @@
-// src/components/Timeline/TrackRow.tsx
-
+/* ─── src/components/Timeline/TrackRow.tsx ─── */
 import React from 'react';
+import type { Track, Asset } from '@/types/project';
+import { useEditorStore } from '@/stores/editorStore';
 import { ClipBlock } from './ClipBlock';
-import type { Track, Clip, Asset } from '@/types/project';
 
 interface TrackRowProps {
   track: Track;
-  projectAssets: readonly Asset[];
+  assets: Asset[];
   pps: number;
   selectedClipId: string | null;
-  onSelectClip: (clipId: string) => void;
-  onMoveStart: (e: React.MouseEvent, clip: Clip) => void;
-  onTrimLeftStart: (e: React.MouseEvent, clip: Clip) => void;
-  onTrimRightStart: (e: React.MouseEvent, clip: Clip) => void;
-  onDropClip: (e: React.DragEvent) => void;
-  onDragOverTrack: (e: React.DragEvent) => void;
+  onSelectClip: (id: string) => void;
+  onMoveClip: (e: React.MouseEvent, clipId: string) => void;
+  onTrimLeft: (e: React.MouseEvent, clipId: string) => void;
+  onTrimRight: (e: React.MouseEvent, clipId: string) => void;
+  onDrop: (e: React.DragEvent) => void;
+  onDragOver: (e: React.DragEvent) => void;
 }
 
-const HIDDEN_TRACK_OPACITY = 0.3;
+export const TrackRow: React.FC<TrackRowProps> = ({
+  track, assets, pps, selectedClipId,
+  onSelectClip, onMoveClip, onTrimLeft, onTrimRight,
+  onDrop, onDragOver,
+}) => {
+  const store = useEditorStore();
+  const trackColor = (track as any).color || '#4A90D9';
 
-export function TrackRow({
-  track,
-  projectAssets,
-  pps,
-  selectedClipId,
-  onSelectClip,
-  onMoveStart,
-  onTrimLeftStart,
-  onTrimRightStart,
-  onDropClip,
-  onDragOverTrack,
-}: TrackRowProps): React.ReactElement {
-  const isLocked = track.locked;
-  const isVisible = track.visible;
+  /* Solo로 인한 실효 mute 계산 - 안전 체크 */
+  let effectiveMuted = track.muted;
+  if (typeof (store as any).getEffectiveMuted === 'function') {
+    effectiveMuted = (store as any).getEffectiveMuted(track.id);
+  }
 
   return (
     <div
       style={{
         position: 'relative',
-        borderBottom: '1px solid var(--border)',
         height: track.height,
-        opacity: isVisible ? 1 : HIDDEN_TRACK_OPACITY,
-        pointerEvents: isLocked ? 'none' : 'auto',
+        boxSizing: 'border-box',
+        borderBottom: '1px solid var(--border-secondary, #333)',
+        opacity: track.visible ? 1 : 0.3,
+        pointerEvents: track.locked ? 'none' : 'auto',
+        borderLeft: `3px solid ${trackColor}`,
+        background: effectiveMuted && !track.muted
+          ? 'rgba(255,100,100,.04)'
+          : 'transparent',
       }}
-      onDrop={isLocked ? undefined : onDropClip}
-      onDragOver={isLocked ? undefined : onDragOverTrack}
+      onDrop={onDrop}
+      onDragOver={onDragOver}
     >
-      {track.clips.map((clip) => {
-        const asset = projectAssets.find((a) => a.id === clip.assetId);
-        const assetName = asset?.name ?? 'Clip';
+      {effectiveMuted && !track.muted && (
+        <div style={{
+          position: 'absolute', top: 2, right: 4,
+          fontSize: 9, color: '#ff6b6b', opacity: 0.7,
+          zIndex: 5, pointerEvents: 'none',
+        }}>
+          MUTED (Solo)
+        </div>
+      )}
 
+      {track.clips.map(clip => {
+        const asset = assets.find(a => a.id === clip.assetId);
         return (
           <ClipBlock
             key={clip.id}
             clip={clip}
             track={track}
-            assetName={assetName}
-            isSelected={selectedClipId === clip.id}
+            assetName={asset?.name ?? 'Unknown'}
+            isSelected={clip.id === selectedClipId}
             pps={pps}
             trackHeight={track.height}
             onSelect={() => onSelectClip(clip.id)}
-            onMoveStart={(e) => onMoveStart(e, clip)}
-            onTrimLeftStart={(e) => onTrimLeftStart(e, clip)}
-            onTrimRightStart={(e) => onTrimRightStart(e, clip)}
+            onMoveStart={(e) => onMoveClip(e, clip.id)}
+            onTrimLeftStart={(e) => onTrimLeft(e, clip.id)}
+            onTrimRightStart={(e) => onTrimRight(e, clip.id)}
           />
         );
       })}
     </div>
   );
-}
+};
