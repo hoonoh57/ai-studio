@@ -7,7 +7,7 @@ const CANVAS_BG = '#000000';
 const PRELOAD_AHEAD = 0.5; // 전환 전 0.5초 미리 로드
 
 /* ─── 컴포넌트 ─── */
-export default function PreviewArea() {
+export function PreviewArea() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoARef = useRef<HTMLVideoElement>(null);
   const videoBRef = useRef<HTMLVideoElement>(null);
