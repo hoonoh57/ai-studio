@@ -73,6 +73,36 @@ const styles = {
   audioIcon: { fontSize: 40 } as React.CSSProperties,
 } as const;
 
+/** clip.filters 배열 → CSS filter 문자열 변환 */
+const buildCssFilter = (filters?: any[]): string => {
+  if (!filters || filters.length === 0) return 'none';
+
+  return filters
+    .map(f => {
+      // T-4: params 사용 또는 기본 value 사용
+      const v = f.params ? Object.values(f.params)[0] : (f.value ?? f.defaultValue ?? 0);
+      const num = typeof v === 'number' ? v : 0;
+      switch (f.name.toLowerCase()) {
+        case 'brightness':  return `brightness(${1 + num / 100})`;
+        case 'contrast':    return `contrast(${1 + num / 100})`;
+        case 'saturation':  return `saturate(${1 + num / 100})`;
+        case 'saturate':    return `saturate(${1 + num / 100})`; // Alias
+        case 'hue shift':   return `hue-rotate(${num}deg)`;
+        case 'hue-rotate':  return `hue-rotate(${num}deg)`; // Alias
+        case 'blur':        return `blur(${num}px)`;
+        case 'grayscale':   return `grayscale(${num / 100})`;
+        case 'sepia':       return `sepia(${num / 100})`;
+        case 'invert':      return `invert(${num / 100})`;
+        case 'noise':       return `opacity(${1 - num / 100})`;
+        case 'vignette':    return `brightness(${1 - num / 200})`;
+        case 'sharpen':     return `contrast(${1 + num / 200})`;
+        default:            return '';
+      }
+    })
+    .filter(Boolean)
+    .join(' ') || 'none';
+};
+
 export function PreviewArea(): React.ReactElement {
   const currentTime = useEditorStore((s) => s.currentTime);
   const isPlaying = useEditorStore((s) => s.isPlaying);
@@ -86,7 +116,7 @@ export function PreviewArea(): React.ReactElement {
   // Active clip loop: find top-most visible track with a clip at currentTime
   const activeClip: ActiveClipData | null = useMemo(() => {
     // Reverse order to check higher tracks first (layering)
-    const sortedTracks = [...project.tracks].sort((a, b) => b.order - a.order);
+    const sortedTracks = [...project.tracks].sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
     for (const track of sortedTracks) {
       if (!track.visible) continue;
       for (const clip of track.clips) {
@@ -112,7 +142,7 @@ export function PreviewArea(): React.ReactElement {
       const state = useEditorStore.getState();
       // Find current clip speed
       let speed = 1;
-      const sorted = [...state.project.tracks].sort((a, b) => b.order - a.order);
+      const sorted = [...state.project.tracks].sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
       for (const t of sorted) {
         if (!t.visible) continue;
         const c = t.clips.find(cl => state.currentTime >= cl.startTime && state.currentTime < cl.startTime + cl.duration);
@@ -157,6 +187,7 @@ export function PreviewArea(): React.ReactElement {
     opacity: activeClip.clip.opacity,
     transform: `translate(${activeClip.clip.transform.x}px, ${activeClip.clip.transform.y}px) scale(${activeClip.clip.transform.scale}) rotate(${activeClip.clip.transform.rotation}deg)`,
     mixBlendMode: activeClip.clip.blendMode as any,
+    filter: buildCssFilter(activeClip.clip.filters),
   } : {};
 
   return (
