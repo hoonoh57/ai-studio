@@ -1,0 +1,144 @@
+/* src/components/Layout/EditorLayout.module.css */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-primary);
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.mediaWrap {
+  width: var(--media-panel-width);
+  flex-shrink: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.centerCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.previewArea {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.timelineArea {
+  height: var(--timeline-height);
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.propertiesWrap {
+  width: var(--properties-width);
+  flex-shrink: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+/* ── Beginner View ── */
+
+.beginnerMain {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justifyContent: 'center';
+  background: var(--bg-primary);
+  padding: 40px;
+}
+
+.aiPromptBox {
+  max-width: 700px;
+  width: 100%;
+  text-align: center;
+}
+
+.aiTitle {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.aiSubtitle {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 32px;
+}
+
+.aiTextarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 16px;
+  font-size: 15px;
+  line-height: 1.6;
+  background: var(--bg-surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  resize: vertical;
+  outline: none;
+  font-family: inherit;
+}
+
+.aiTextarea:focus {
+  border-color: var(--accent);
+}
+
+.aiButton {
+  margin-top: 16px;
+  padding: 12px 32px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.aiButton:hover {
+  opacity: 0.9;
+}
+
+.aiPresets {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 24px;
+  flex-wrap: wrap;
+}
+
+.aiPresetChip {
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.aiPresetChip:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
