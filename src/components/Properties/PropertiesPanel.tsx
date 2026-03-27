@@ -2,6 +2,7 @@
 import React from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import { BlendMode } from '@/types/project';
+import { KeyframePanel } from './KeyframePanel';
 
 const PANEL_MIN_WIDTH = 220;
 const HEADER_PADDING_V = 8;
@@ -300,6 +301,9 @@ export function PropertiesPanel(): React.ReactElement {
             </button>
           ))}
         </div>
+
+        {/* Step 3: Keyframes */}
+        <KeyframePanel />
       </div>
     </div>
   );
