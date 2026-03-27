@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Track, Clip } from '@/types/project';
-import ClipBlock from './ClipBlock';
+import { ClipBlock } from './ClipBlock';
 
 type TrackRowProps = {
   track: Track;

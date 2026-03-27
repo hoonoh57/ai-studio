@@ -1,10 +1,12 @@
+// src/components/Timeline/ClipBlock.tsx
+
 import React from 'react';
 import { useEditorStore } from '@/stores/editorStore';
-import type { Clip, Track, ThumbnailData, WaveformData } from '@/types/project';
 import { WaveformView } from './WaveformView';
 import { ThumbnailStrip } from './ThumbnailStrip';
+import type { Clip, Track, TrackType } from '@/types/project';
 
-type ClipBlockProps = {
+interface ClipBlockProps {
   clip: Clip;
   track: Track;
   assetName: string;
@@ -15,58 +17,38 @@ type ClipBlockProps = {
   onMoveStart: (e: React.MouseEvent) => void;
   onTrimLeftStart: (e: React.MouseEvent) => void;
   onTrimRightStart: (e: React.MouseEvent) => void;
-};
+}
 
-const clipColors: Record<string, string> = {
+const CLIP_PADDING_TOP = 4;
+const CLIP_PADDING_HORIZONTAL = 8;
+const CLIP_BORDER_RADIUS = 4;
+const CLIP_FONT_SIZE = 10;
+const CLIP_FONT_WEIGHT = 500;
+const HANDLE_WIDTH = 6;
+const TRANSITION_OVERLAY_WIDTH = 10;
+const TRANSITION_OVERLAY_COLOR = 'rgba(255,255,255,0.4)';
+const SELECTED_BORDER = '2px solid #fff';
+const NORMAL_BORDER = '1px solid rgba(255,255,255,0.15)';
+const THUMBNAIL_HEIGHT_RATIO = 0.65;
+const WAVEFORM_HEIGHT_RATIO = 0.35;
+const VISUALIZATION_DIVIDER = '1px solid rgba(255,255,255,0.1)';
+
+const CLIP_COLORS: Record<TrackType | string, string> = {
   video: 'var(--clip-video)',
   audio: 'var(--clip-audio)',
   text: 'var(--clip-text)',
   effect: 'var(--clip-effect)',
 };
 
-const styles: Record<string, React.CSSProperties> = {
-  clip: {
-    position: 'absolute',
-    top: 4,
-    borderRadius: 4,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    padding: '0 8px',
-    fontSize: 10,
-    color: '#fff',
-    fontWeight: 500,
-    overflow: 'hidden',
-    whiteSpace: 'nowrap',
-    textOverflow: 'ellipsis',
-    userSelect: 'none',
-    willChange: 'transform',
-    contain: 'layout',
-  },
-  clipLabel: {
-    flex: 1,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    pointerEvents: 'none',
-  },
-  handle: {
-    width: 6,
-    height: '100%',
-    position: 'absolute',
-    top: 0,
-    cursor: 'col-resize',
-  },
-  handleLeft: {
-    left: 0,
-    borderRadius: '4px 0 0 4px',
-  },
-  handleRight: {
-    right: 0,
-    borderRadius: '0 4px 4px 0',
-  },
+const handleBase: React.CSSProperties = {
+  width: HANDLE_WIDTH,
+  height: '100%',
+  position: 'absolute',
+  top: 0,
+  cursor: 'col-resize',
 };
 
-export default function ClipBlock({
+export function ClipBlock({
   clip,
   track,
   assetName,
@@ -77,16 +59,17 @@ export default function ClipBlock({
   onMoveStart,
   onTrimLeftStart,
   onTrimRightStart,
-}: ClipBlockProps) {
+}: ClipBlockProps): React.ReactElement {
   const left = clip.timelineStart * pps;
   const width = (clip.timelineEnd - clip.timelineStart) * pps;
+  const clipHeight = trackHeight - (CLIP_PADDING_TOP * 2);
 
   const showWaveform = useEditorStore((s) => s.getSkillConfig().showWaveform);
-  const showThumbnailStrip = useEditorStore((s) => s.getSkillConfig().showThumbnailStrip);
+  const showThumbnailStrip = useEditorStore(
+    (s) => s.getSkillConfig().showThumbnailStrip,
+  );
   const transitions = useEditorStore((s) => s.transitions);
   const toggleMultiSelect = useEditorStore((s) => s.toggleMultiSelect);
-  const selectClipRange = useEditorStore((s) => s.selectClipRange);
-
   const waveformCache = useEditorStore((s) => s.waveformCache);
   const thumbnailCache = useEditorStore((s) => s.thumbnailCache);
 
@@ -96,66 +79,123 @@ export default function ClipBlock({
   const transitionStart = transitions.find((t) => t.clipBId === clip.id);
   const transitionEnd = transitions.find((t) => t.clipAId === clip.id);
 
+  const bgColor = isSelected
+    ? 'var(--accent-hover)'
+    : CLIP_COLORS[track.type] ?? CLIP_COLORS.video;
+
+  const border = isSelected ? SELECTED_BORDER : NORMAL_BORDER;
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (e.ctrlKey || e.metaKey) {
+      toggleMultiSelect(clip.id);
+      return;
+    }
+    onSelect();
+  };
+
+  const showThumbStrip =
+    track.type === 'video' && showThumbnailStrip && thumbnailData !== null;
+
+  const showWave =
+    (track.type === 'audio' || track.type === 'video') &&
+    showWaveform &&
+    waveformData !== null;
+
+  const thumbHeight = showThumbStrip
+    ? clipHeight * THUMBNAIL_HEIGHT_RATIO
+    : 0;
+
+  const waveHeight = showWave
+    ? showThumbStrip
+      ? clipHeight * WAVEFORM_HEIGHT_RATIO
+      : clipHeight
+    : 0;
+
   return (
     <div
       style={{
-        ...styles.clip,
+        position: 'absolute',
         left,
         width,
-        height: trackHeight - 8,
-        background: isSelected ? 'var(--accent-hover)' : clipColors[track.type] || 'var(--clip-video)',
-        border: isSelected ? '2px solid #fff' : '1px solid rgba(255,255,255,0.15)',
+        top: CLIP_PADDING_TOP,
+        height: clipHeight,
+        borderRadius: CLIP_BORDER_RADIUS,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        padding: `0 ${CLIP_PADDING_HORIZONTAL}px`,
+        fontSize: CLIP_FONT_SIZE,
+        color: '#fff',
+        fontWeight: CLIP_FONT_WEIGHT,
+        overflow: 'hidden',
+        whiteSpace: 'nowrap',
+        textOverflow: 'ellipsis',
+        userSelect: 'none',
+        willChange: 'transform',
+        contain: 'layout',
+        background: bgColor,
+        border,
       }}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (e.shiftKey) {
-          selectClipRange(clip.id, clip.id); // in Multi-select context this should be range from last selected to this; simplified
-          return;
-        }
-        if (e.ctrlKey || e.metaKey) {
-          toggleMultiSelect(clip.id);
-          return;
-        }
-        onSelect();
-      }}
+      onClick={handleClick}
       onMouseDown={onMoveStart}
     >
-      {transitionStart && (
+      {transitionStart !== undefined && (
         <div
           style={{
             position: 'absolute',
             left: 0,
             top: 0,
-            width: 10,
+            width: TRANSITION_OVERLAY_WIDTH,
             height: '100%',
-            background: 'rgba(255,255,255,0.4)',
+            background: TRANSITION_OVERLAY_COLOR,
             pointerEvents: 'none',
           }}
           title={`Transition from ${transitionStart.clipAId}`}
         />
       )}
-      {transitionEnd && (
+
+      {transitionEnd !== undefined && (
         <div
           style={{
             position: 'absolute',
             right: 0,
             top: 0,
-            width: 10,
+            width: TRANSITION_OVERLAY_WIDTH,
             height: '100%',
-            background: 'rgba(255,255,255,0.4)',
+            background: TRANSITION_OVERLAY_COLOR,
             pointerEvents: 'none',
           }}
           title={`Transition to ${transitionEnd.clipBId}`}
         />
       )}
 
-      <div style={{ width: '100%', position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, pointerEvents: 'none', display: 'flex', flexDirection: 'column' }}>
-        {track.type === 'video' && showThumbnailStrip && thumbnailData && (
-          <div style={{ height: '65%', position: 'relative', overflow: 'hidden', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-            <ThumbnailStrip 
-              thumbnailData={thumbnailData as ThumbnailData} 
-              width={width} 
-              height={(trackHeight - 8) * 0.65} 
+      <div
+        style={{
+          width: '100%',
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          pointerEvents: 'none',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {showThumbStrip && (
+          <div
+            style={{
+              height: thumbHeight,
+              position: 'relative',
+              overflow: 'hidden',
+              borderBottom: VISUALIZATION_DIVIDER,
+            }}
+          >
+            <ThumbnailStrip
+              thumbnailData={thumbnailData}
+              width={width}
+              height={thumbHeight}
               clipStart={clip.timelineStart}
               clipEnd={clip.timelineEnd}
               sourceStart={clip.sourceStart}
@@ -163,12 +203,19 @@ export default function ClipBlock({
             />
           </div>
         )}
-        {(track.type === 'audio' || track.type === 'video') && showWaveform && waveformData && (
-          <div style={{ height: track.type === 'video' ? '35%' : '100%', position: 'relative', overflow: 'hidden' }}>
-            <WaveformView 
-              waveformData={waveformData as WaveformData} 
-              width={width} 
-              height={track.type === 'video' ? (trackHeight - 8) * 0.35 : (trackHeight - 8)} 
+
+        {showWave && (
+          <div
+            style={{
+              height: waveHeight,
+              position: 'relative',
+              overflow: 'hidden',
+            }}
+          >
+            <WaveformView
+              waveformData={waveformData}
+              width={width}
+              height={waveHeight}
               clipStart={clip.timelineStart}
               clipEnd={clip.timelineEnd}
               sourceStart={clip.sourceStart}
@@ -178,10 +225,41 @@ export default function ClipBlock({
         )}
       </div>
 
+      <div
+        style={{
+          ...handleBase,
+          left: 0,
+          borderRadius: `${CLIP_BORDER_RADIUS}px 0 0 ${CLIP_BORDER_RADIUS}px`,
+        }}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          onTrimLeftStart(e);
+        }}
+      />
 
-      <div style={{ ...styles.handle, ...styles.handleLeft }} onMouseDown={(e) => { e.stopPropagation(); onTrimLeftStart(e); }} />
-      <span style={styles.clipLabel}>{assetName || 'Clip'}</span>
-      <div style={{ ...styles.handle, ...styles.handleRight }} onMouseDown={(e) => { e.stopPropagation(); onTrimRightStart(e); }} />
+      <span
+        style={{
+          flex: 1,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          pointerEvents: 'none',
+        }}
+      >
+        {assetName}
+      </span>
+
+      <div
+        style={{
+          ...handleBase,
+          right: 0,
+          left: 'auto',
+          borderRadius: `0 ${CLIP_BORDER_RADIUS}px ${CLIP_BORDER_RADIUS}px 0`,
+        }}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          onTrimRightStart(e);
+        }}
+      />
     </div>
   );
 }
