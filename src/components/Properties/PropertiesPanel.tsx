@@ -1,8 +1,8 @@
 /* ─── src/components/Properties/PropertiesPanel.tsx ─── */
 import React from 'react';
 import { useEditorStore } from '@/stores/editorStore';
-import { BlendMode } from '@/types/project';
 import { KeyframePanel } from './KeyframePanel';
+import { BlendMode } from '@/types/project';
 
 const PANEL_MIN_WIDTH = 220;
 const HEADER_PADDING_V = 8;
@@ -302,7 +302,6 @@ export function PropertiesPanel(): React.ReactElement {
           ))}
         </div>
 
-        {/* Step 3: Keyframes */}
         <KeyframePanel />
       </div>
     </div>
