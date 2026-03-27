@@ -1,79 +1,135 @@
+// src/lib/core/waveformGenerator.ts
+
 import type { WaveformData } from '@/types/project';
 
-function getAudioContext() {
-  return new (window.AudioContext || window.webkitAudioContext)();
-}
+const DEFAULT_PEAK_COUNT = 200;
 
-export function generateWaveformData(
+/**
+ * AudioBuffer에서 peak 배열을 추출합니다.
+ * 각 peak는 0~1 범위로 정규화됩니다.
+ * 모든 채널의 절대값 최대치를 사용합니다.
+ */
+export function extractPeaks(
   audioBuffer: AudioBuffer,
-  samplesPerPeak = 256,
-  assetId = 'unknown'
-): WaveformData {
-  const channelData = [] as Float32Array[];
-  for (let i = 0; i < audioBuffer.numberOfChannels; i += 1) {
-    channelData.push(audioBuffer.getChannelData(i));
-  }
-
-  const sampleCount = audioBuffer.length;
-  const peakCount = Math.ceil(sampleCount / samplesPerPeak);
+  peakCount: number = DEFAULT_PEAK_COUNT,
+): readonly number[] {
+  const channelCount = audioBuffer.numberOfChannels;
+  const frameCount = audioBuffer.length;
+  const framesPerPeak = Math.max(1, Math.floor(frameCount / peakCount));
   const peaks: number[] = [];
 
-  for (let peakIndex = 0; peakIndex < peakCount; peakIndex += 1) {
-    const start = peakIndex * samplesPerPeak;
-    const end = Math.min(start + samplesPerPeak, sampleCount);
-    let maxAbs = 0;
+  const channels: Float32Array[] = [];
+  for (let ch = 0; ch < channelCount; ch++) {
+    channels.push(audioBuffer.getChannelData(ch));
+  }
 
-    for (let c = 0; c < channelData.length; c += 1) {
-      const channel = channelData[c];
-      for (let i = start; i < end; i += 1) {
-        const absval = Math.abs(channel[i]);
-        if (absval > maxAbs) maxAbs = absval;
+  for (let i = 0; i < peakCount; i++) {
+    const start = i * framesPerPeak;
+    const end = Math.min(start + framesPerPeak, frameCount);
+    let max = 0;
+
+    for (let frame = start; frame < end; frame++) {
+      for (let ch = 0; ch < channelCount; ch++) {
+        const abs = Math.abs(channels[ch][frame]);
+        if (abs > max) max = abs;
       }
     }
 
-    peaks.push(Math.min(1, maxAbs));
+    peaks.push(max);
   }
 
+  return peaks;
+}
+
+/**
+ * ArrayBuffer를 AudioBuffer로 디코딩합니다.
+ * 디코딩 실패 시 null을 반환합니다.
+ */
+export async function decodeAudio(
+  arrayBuffer: ArrayBuffer,
+): Promise<AudioBuffer | null> {
+  try {
+    const ctx = new OfflineAudioContext(1, 1, 44100);
+    const decoded = await ctx.decodeAudioData(arrayBuffer);
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * URL에서 오디오를 fetch하여 WaveformData를 생성합니다.
+ * 비디오 URL도 지원합니다 (브라우저가 오디오 트랙을 디코딩).
+ * 실패 시 null을 반환합니다.
+ */
+export async function generateWaveformFromUrl(
+  url: string,
+  assetId: string,
+  peakCount: number = DEFAULT_PEAK_COUNT,
+): Promise<WaveformData | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await decodeAudio(arrayBuffer);
+    if (audioBuffer === null) return null;
+
+    const peaks = extractPeaks(audioBuffer, peakCount);
+
+    return {
+      assetId,
+      peaks,
+      sampleRate: audioBuffer.sampleRate,
+      duration: audioBuffer.duration,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Blob/File 객체에서 직접 WaveformData를 생성합니다.
+ * MediaPanel에서 파일 임포트 시 사용할 수 있습니다.
+ */
+export async function generateWaveformFromBlob(
+  blob: Blob,
+  assetId: string,
+  peakCount: number = DEFAULT_PEAK_COUNT,
+): Promise<WaveformData | null> {
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+    const audioBuffer = await decodeAudio(arrayBuffer);
+    if (audioBuffer === null) return null;
+
+    const peaks = extractPeaks(audioBuffer, peakCount);
+
+    return {
+      assetId,
+      peaks,
+      sampleRate: audioBuffer.sampleRate,
+      duration: audioBuffer.duration,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Web Audio API 디코딩이 실패할 경우의 폴백입니다.
+ * HTMLMediaElement의 재생 시간 기반으로 빈 파형을 생성합니다.
+ * UI에서 "파형 없음" 대신 무음 막대라도 표시하기 위함입니다.
+ */
+export function createEmptyWaveform(
+  assetId: string,
+  duration: number,
+  peakCount: number = DEFAULT_PEAK_COUNT,
+): WaveformData {
+  const peaks: number[] = new Array(peakCount).fill(0.02);
   return {
     assetId,
     peaks,
-    sampleRate: audioBuffer.sampleRate,
-    duration: audioBuffer.duration,
+    sampleRate: 44100,
+    duration,
   };
-}
-
-export async function decodeAudioFromFile(file: File | Blob): Promise<AudioBuffer> {
-  const context = getAudioContext();
-
-  try {
-    const arrayBuffer = await file.arrayBuffer();
-    const decoded = await context.decodeAudioData(arrayBuffer);
-    return decoded;
-  } catch (error) {
-    console.error('decodeAudioFromFile error:', error);
-    return context.createBuffer(1, 1, 44100);
-  }
-}
-
-export async function generateWaveformFromUrl(
-  url: string,
-  samplesPerPeak = 256,
-  assetId = url
-): Promise<WaveformData> {
-  const context = getAudioContext();
-
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch audio URL: ${response.status}`);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const audioBuffer = await context.decodeAudioData(arrayBuffer);
-    return generateWaveformData(audioBuffer, samplesPerPeak, assetId);
-  } catch (error) {
-    console.error('generateWaveformFromUrl error:', error);
-    const emptyBuffer = context.createBuffer(1, 1, 44100);
-    return generateWaveformData(emptyBuffer, samplesPerPeak, assetId);
-  }
 }

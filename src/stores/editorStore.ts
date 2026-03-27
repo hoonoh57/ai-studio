@@ -15,6 +15,7 @@ import type {
 } from '@/types/project';
 import type { SkillLevel, EditorTab, PanelId, SkillConfig } from '@/types/project';
 import { SKILL_CONFIGS } from '@/types/project';
+import { generateWaveformFromUrl, createEmptyWaveform } from '@/lib/core/waveformGenerator';
 
 let uidCounter = 0;
 const uid = (prefix: string) => `${prefix}_${Date.now()}_${++uidCounter}`;
@@ -205,11 +206,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             frames.push(canvas.toDataURL('image/jpeg', 0.6));
           }
           get().cacheThumbnail(asset.id, { assetId: asset.id, frames, interval });
-          // Also generate a mock waveform for the video's audio
-          get().cacheWaveform(asset.id, { assetId: asset.id, peaks: Array.from({length:100}, () => Math.random()), sampleRate: 44100, duration: asset.duration });
+          
+          // Real Audio Waveform from video track
+          const wf = await generateWaveformFromUrl(asset.src, asset.id);
+          get().cacheWaveform(asset.id, wf || createEmptyWaveform(asset.id, asset.duration));
         };
       } else if (asset.type === 'audio') {
-        get().cacheWaveform(asset.id, { assetId: asset.id, peaks: Array.from({length:100}, () => Math.random()), sampleRate: 44100, duration: asset.duration });
+        (async () => {
+          const wf = await generateWaveformFromUrl(asset.src, asset.id);
+          get().cacheWaveform(asset.id, wf || createEmptyWaveform(asset.id, asset.duration));
+        })();
       }
     }
 
