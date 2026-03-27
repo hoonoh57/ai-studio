@@ -8,6 +8,7 @@ import {
   assetTypeToTrackType, TrimMode, BlendMode,
   KeyframeProperty, EasingType, Keyframe, KeyframeTrack,
 } from '@/types/project';
+import type { EffectInstance, EffectKeyframe } from '@/types/effect';
 import { createMediaSlice, MEDIA_INITIAL_STATE, MediaSlice } from './mediaSlice';
 
 /* UID 유틸 */
@@ -102,6 +103,15 @@ export interface EditorState {
   removeKeyframe: (clipId: string, property: KeyframeProperty, keyframeId: string) => void;
   updateKeyframe: (clipId: string, property: KeyframeProperty, keyframeId: string, patch: Partial<Keyframe>) => void;
   getKeyframeValue: (clipId: string, property: KeyframeProperty, time: number) => number | null;
+
+  // ─── Effect Instance CRUD ───
+  effects: EffectInstance[];
+  addEffect: (effect: Omit<EffectInstance, 'id'>) => string;
+  updateEffect: (effectId: string, patch: Partial<EffectInstance>) => void;
+  removeEffect: (effectId: string) => void;
+  reorderEffect: (effectId: string, newOrder: number) => void;
+  getActiveEffects: (time: number) => EffectInstance[];
+  getClipEffects: (clipId: string) => EffectInstance[];
 
   /* 재생/선택 */
   currentTime: number;
@@ -700,6 +710,50 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     return null;
   },
 
+  // ─── Effect Instance CRUD ───
+  addEffect: (effect) => {
+    const id = uid('fx');
+    set(state => ({
+      effects: [...state.effects, { ...effect, id } as EffectInstance]
+        .sort((a, b) => a.order - b.order),
+    }));
+    return id;
+  },
+
+  updateEffect: (effectId, patch) => {
+    set(state => ({
+      effects: state.effects.map(e =>
+        e.id === effectId ? { ...e, ...patch } : e
+      ),
+    }));
+  },
+
+  removeEffect: (effectId) => {
+    set(state => ({
+      effects: state.effects.filter(e => e.id !== effectId),
+    }));
+  },
+
+  reorderEffect: (effectId, newOrder) => {
+    set(state => ({
+      effects: state.effects
+        .map(e => e.id === effectId ? { ...e, order: newOrder } : e)
+        .sort((a, b) => a.order - b.order),
+    }));
+  },
+
+  getActiveEffects: (time) => {
+    return get().effects.filter(e =>
+      e.enabled && time >= e.startTime && time < e.startTime + e.duration
+    ).sort((a, b) => a.order - b.order);
+  },
+
+  getClipEffects: (clipId) => {
+    return get().effects.filter(e =>
+      e.target.type === 'clip' && e.target.clipId === clipId
+    ).sort((a, b) => a.order - b.order);
+  },
+
   /* ──── 재생/선택 ──── */
   currentTime: 0,
   isPlaying: false,
@@ -721,6 +775,7 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   setOutPoint: (t) => set((s) => ({ inOut: { ...s.inOut, outPoint: t } })),
   clearInOut: () => set({ inOut: { inPoint: null, outPoint: null } }),
   transitions: [],
+  effects: [], // ★ ADD
   addTransition: (t) => set((s) => ({ transitions: [...s.transitions, t] })),
   removeTransition: (id) => set((s) => ({ transitions: s.transitions.filter(t => t.id !== id) })),
 
