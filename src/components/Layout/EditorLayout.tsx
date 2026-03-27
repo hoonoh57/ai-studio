@@ -41,8 +41,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   previewArea: {
     flex: 1,
-    minHeight: 200,
+    minHeight: 0,
     overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
   },
   timelineArea: {
     height: TIMELINE_HEIGHT,
