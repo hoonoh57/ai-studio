@@ -3,7 +3,7 @@
 import React, { useEffect, useCallback } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import { SKILL_CONFIGS } from '@/types/project';
-import type { TrimMode } from '@/types/project';
+import type { TrimMode, TrackType } from '@/types/project';
 
 const TOOLBAR_HEIGHT = 32;
 const ZOOM_SLIDER_WIDTH = 80;
@@ -106,6 +106,34 @@ export function TimelineToolbar(): React.ReactElement {
   const redoStack = useEditorStore((s) => s.redoStack);
 
   const config = SKILL_CONFIGS[skillLevel];
+  const tracks = useEditorStore((s) => s.project.tracks);
+  const addTrackChecked = useEditorStore((s) => s.addTrackChecked);
+  const pushUndo = useEditorStore((s) => s.pushUndo);
+
+  const [showAddTrack, setShowAddTrack] = React.useState(false);
+  const addTrackRef = React.useRef<HTMLDivElement>(null);
+
+  const canAddTrack = tracks.length < config.maxTracks;
+
+  // ── 트랙 추가 (Phase T-1) ──
+  React.useEffect(() => {
+    if (!showAddTrack) return;
+    const handle = (e: MouseEvent) => {
+      if (addTrackRef.current && !addTrackRef.current.contains(e.target as Node)) {
+        setShowAddTrack(false);
+      }
+    };
+    const raf = requestAnimationFrame(() => document.addEventListener('mousedown', handle));
+    return () => { cancelAnimationFrame(raf); document.removeEventListener('mousedown', handle); };
+  }, [showAddTrack]);
+
+  const handleAddTrack = (type: TrackType) => {
+    setShowAddTrack(false);
+    if (!canAddTrack) return;
+    pushUndo('Add track');
+    addTrackChecked(type);
+  };
+
   const isExpert = skillLevel === 'expert';
   const showAdvancedTrim = config.showAdvancedTrim;
 
@@ -190,6 +218,72 @@ export function TimelineToolbar(): React.ReactElement {
       >
         ↪ Redo
       </button>
+
+      <div style={styles.separator} />
+
+      <div ref={addTrackRef} style={{ position: 'relative' }}>
+        <button
+          style={{
+            ...styles.toolBtn,
+            ...(canAddTrack ? {} : styles.toolBtnDisabled),
+          }}
+          onClick={() => setShowAddTrack(prev => !prev)}
+          disabled={!canAddTrack}
+          title={canAddTrack
+            ? `트랙 추가 (${tracks.length}/${config.maxTracks})`
+            : `최대 트랙 수 도달 (${config.maxTracks})`}
+        >
+          ＋ Track
+        </button>
+        {showAddTrack && (
+          <div style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            marginTop: 4,
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-light)',
+            borderRadius: 6,
+            padding: 4,
+            zIndex: 1000,
+            minWidth: 140,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+          }}>
+            {[
+              { type: 'video' as TrackType, label: '🎬 비디오 트랙' },
+              { type: 'audio' as TrackType, label: '🎵 오디오 트랙' },
+              { type: 'text' as TrackType, label: '✏️ 텍스트 트랙' },
+              { type: 'effect' as TrackType, label: '✨ 이펙트 트랙' },
+            ].map(item => (
+              <button
+                key={item.type}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  padding: '6px 10px',
+                  fontSize: 11,
+                  color: 'var(--text-primary)',
+                  background: 'transparent',
+                  border: 'none',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontFamily: 'inherit',
+                }}
+                onClick={() => handleAddTrack(item.type)}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+        {tracks.length}/{config.maxTracks}
+      </span>
 
       <div style={styles.separator} />
 

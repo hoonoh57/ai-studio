@@ -303,7 +303,15 @@ export function TimelinePanel(): React.ReactElement {
       const x = e.clientX - rect.left + scroll.scrollLeft;
       const startTime = x / pps;
 
-      addClip(trackId, {
+      // ── 자동 트랙 생성: 빈 영역 드롭 시 ──
+      let targetTrackId = trackId;
+      if (targetTrackId === '__auto__') {
+        const type = asset.type === 'audio' ? 'audio' : 'video';
+        const newTrack = useEditorStore.getState().addTrack(type);
+        targetTrackId = newTrack.id;
+      }
+
+      addClip(targetTrackId, {
         assetId,
         timelineStart: startTime,
         timelineEnd: startTime + asset.duration,
@@ -355,6 +363,8 @@ export function TimelinePanel(): React.ReactElement {
             display: 'flex',
             flexDirection: 'column',
             zIndex: TRACK_LABEL_Z_INDEX,
+            overflowY: 'auto',
+            overflowX: 'hidden',
           }}
         >
           <div
@@ -374,7 +384,7 @@ export function TimelinePanel(): React.ReactElement {
           style={{
             flex: 1,
             overflowX: 'auto',
-            overflowY: 'hidden',
+            overflowY: 'auto',
             position: 'relative',
           }}
           ref={scrollRef}
@@ -430,6 +440,24 @@ export function TimelinePanel(): React.ReactElement {
                 }
               />
             ))}
+
+            {/* 트랙 아래 빈 영역에 드롭 가능한 "자동 생성" 존 추가 */}
+            <div
+              style={{
+                height: 60,
+                borderBottom: '1px dashed var(--border)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 10,
+                color: 'var(--text-muted)',
+                cursor: 'default',
+              }}
+              onDrop={(e) => handleDrop(e, '__auto__')}
+              onDragOver={(e) => e.preventDefault()}
+            >
+              + 여기에 드롭하면 새 트랙이 자동 생성됩니다
+            </div>
           </div>
 
           {/* Overlays */}

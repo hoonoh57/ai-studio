@@ -103,6 +103,9 @@ interface EditorCoreActions {
   setActiveTab: (tab: EditorTab) => void;
   setActivePanel: (panel: PanelId) => void;
   getSkillConfig: () => SkillConfig;
+  addTrackChecked: (type: TrackType, name?: string) => Track | null;
+  moveTrack: (trackId: string, direction: 'up' | 'down') => void;
+  duplicateTrack: (trackId: string) => void;
   exportProject: () => string;
   // 버그#5: undo/redo 액션
   pushUndo: (label: string) => void;
@@ -600,6 +603,59 @@ export const useEditorStore = create<EditorState>()(
     },
 
     getSkillConfig: () => SKILL_CONFIGS[get().skillLevel],
+
+    // ── 트랙 추가 (스킬 레벨 제한 반영) ──
+    addTrackChecked: (type, name) => {
+      const state = get();
+      const config = SKILL_CONFIGS[state.skillLevel];
+      if (state.project.tracks.length >= config.maxTracks) {
+        return null;
+      }
+      return get().addTrack(type, name);
+    },
+
+    // ── 트랙 이동 (재정렬) ──
+    moveTrack: (trackId, direction) => {
+      set((s) => {
+        const tracks = [...s.project.tracks];
+        const idx = tracks.findIndex((t) => t.id === trackId);
+        if (idx === -1) return s;
+        const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if (targetIdx < 0 || targetIdx >= tracks.length) return s;
+        [tracks[idx], tracks[targetIdx]] = [tracks[targetIdx], tracks[idx]];
+        return { project: { ...s.project, tracks } };
+      });
+    },
+
+    // ── 트랙 복제 ──
+    duplicateTrack: (trackId) => {
+      const state = get();
+      const source = state.project.tracks.find((t) => t.id === trackId);
+      if (source === undefined) return;
+      const config = SKILL_CONFIGS[state.skillLevel];
+      if (state.project.tracks.length >= config.maxTracks) return;
+
+      const newTrackId = uid('trk');
+      const newTrack: Track = {
+        ...source,
+        id: newTrackId,
+        name: `${source.name} (Copy)`,
+        clips: source.clips.map((c) => ({
+          ...c,
+          id: uid('clip'),
+          trackId: newTrackId,
+        })),
+      };
+
+      set((s) => ({
+        project: {
+          ...s.project,
+          tracks: [...s.project.tracks, newTrack],
+        },
+      }));
+
+      get().pushUndo('Duplicate track');
+    },
 
     // ── Export ──
     exportProject: () => JSON.stringify(get().project, null, 2),
