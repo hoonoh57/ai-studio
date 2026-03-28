@@ -76,6 +76,12 @@ export interface ExportEngineApi {
          onProgress?: ProgressCallback): Promise<Uint8Array>;
   cleanup(totalFrames: number): Promise<void>;
   terminate(): void;
+
+  /* ═══ Phase B7-A: 직접 인코딩 지원 ═══ */
+  writeSourceVideo(filename: string, url: string): Promise<void>;
+  writeTextFile(filename: string, content: string): Promise<void>;
+  encodeDirect(args: string[]): Promise<void>;
+  readOutput(filename: string): Promise<Uint8Array>;
 }
 
 export function createExportEngine(): ExportEngineApi {
@@ -157,6 +163,27 @@ export function createExportEngine(): ExportEngineApi {
     return data as Uint8Array;
   }
 
+  /* ═══ Phase B7-A: 직접 인코딩 구현 ═══ */
+
+  async function writeSourceVideo(filename: string, url: string): Promise<void> {
+    const resp = await fetch(url);
+    const buf = new Uint8Array(await resp.arrayBuffer());
+    await ffmpeg.writeFile(filename, buf);
+  }
+
+  async function writeTextFile(filename: string, content: string): Promise<void> {
+    const encoder = new TextEncoder();
+    await ffmpeg.writeFile(filename, encoder.encode(content));
+  }
+
+  async function encodeDirect(args: string[]): Promise<void> {
+    await ffmpeg.exec(args);
+  }
+
+  async function readOutput(filename: string): Promise<Uint8Array> {
+    return await ffmpeg.readFile(filename) as Uint8Array;
+  }
+
   /* 가상 FS 정리 */
   async function cleanup(totalFrames: number): Promise<void> {
     for (let i = 0; i < totalFrames; i++) {
@@ -165,11 +192,15 @@ export function createExportEngine(): ExportEngineApi {
     try { await ffmpeg.deleteFile('audio.wav'); } catch { /* ok */ }
     try { await ffmpeg.deleteFile('output.mp4'); } catch { /* ok */ }
     try { await ffmpeg.deleteFile('output.webm'); } catch { /* ok */ }
+    try { await ffmpeg.deleteFile('concat.txt'); } catch { /* ok */ }
   }
 
   function terminate(): void {
     try { ffmpeg.terminate(); } catch { /* ok */ }
   }
 
-  return { init, writeFrame, writeAudioWav, encode, cleanup, terminate };
+  return { 
+    init, writeFrame, writeAudioWav, encode, cleanup, terminate,
+    writeSourceVideo, writeTextFile, encodeDirect, readOutput,
+  };
 }

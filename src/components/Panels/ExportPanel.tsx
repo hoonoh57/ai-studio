@@ -8,6 +8,7 @@ import {
   type ExportPreset, type ExportProgress, type ExportEngineApi,
 } from '@/engines/exportEngine';
 import { mixdownToWav } from '@/lib/core/offlineAudioMixer';
+import type { Clip, Asset } from '@/types/project';
 
 /* ═══ 스타일 ═══ */
 const S: Record<string, React.CSSProperties> = {
@@ -141,13 +142,71 @@ export function ExportPanel(): React.ReactElement {
     setLoading(false);
   }, []);
 
-  /* ── 내보내기 실행 ── */
+  /* ─── 내보내기 캔버스 폴백 (기존 방식) ─── */
+  const handleCanvasFallbackExport = useCallback(async (
+    engine: ExportEngineApi, startT: number, endT: number, preset: ExportPreset
+  ) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const totalFrames = Math.ceil((endT - startT) * preset.fps);
+    const exportStart = performance.now();
+
+    try {
+      /* ═══ Phase 1: 프레임 캡처 (B7-2) ═══ */
+      for (let i = 0; i < totalFrames; i++) {
+        if (abortRef.current) throw new Error('사용자 취소');
+        const t = startT + i / preset.fps;
+        setCurrentTime(t);
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob(b => { if (b) resolve(b); else reject(new Error('toBlob 실패')); }, 'image/png');
+        });
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        await engine.writeFrame(bytes, i);
+
+        const elapsed = performance.now() - exportStart;
+        const pct = Math.round(((i + 1) / totalFrames) * 70);
+        setProgress({
+          phase: 'frames', percent: pct, currentFrame: i + 1, totalFrames,
+          elapsedMs: elapsed, estimatedRemainingMs: pct > 0 ? (elapsed / pct) * (100 - pct) : 0,
+          message: `프레임 캡처 ${i + 1}/${totalFrames}`,
+        });
+      }
+
+      /* ═══ Phase 2: 오디오 믹스다운 (B7-3) ═══ */
+      let hasAudio = false;
+      const wavBytes = await mixdownToWav(project.tracks, project.assets, startT, endT);
+      if (wavBytes) {
+        await engine.writeAudioWav(wavBytes);
+        hasAudio = true;
+      }
+
+      /* ═══ Phase 3: 인코딩 + 먹싱 (B7-4) ═══ */
+      const data = await engine.encode(preset, totalFrames, hasAudio, (p) => {
+        setProgress({ ...p, percent: 80 + Math.round(p.percent * 0.19) });
+      });
+
+      /* ═══ Phase 4: 완료 ═══ */
+      await engine.cleanup(totalFrames);
+      const blob = new Blob([data as any], { type: `video/${preset.format}` });
+      const url = URL.createObjectURL(blob);
+      setResultUrl(url);
+
+      const totalElapsed = performance.now() - exportStart;
+      setProgress({
+        phase: 'done', percent: 100, currentFrame: totalFrames, totalFrames,
+        elapsedMs: totalElapsed, estimatedRemainingMs: 0,
+        message: `✅ 완료! (${formatTime(totalElapsed)})`,
+      });
+    } catch (err: any) {
+      throw err;
+    }
+  }, [setCurrentTime, project, formatTime]);
+
+  /* ── 내보내기 실행 (Direct Path 도입) ── */
   const handleExport = useCallback(async () => {
     const engine = engineRef.current;
-    const canvas = canvasRef.current;
-    if (!engine || !canvas) return;
-
-    // 재생 중이면 정지
+    if (!engine) return;
     if (isPlaying) togglePlay();
     abortRef.current = false;
     setExporting(true);
@@ -156,101 +215,161 @@ export function ExportPanel(): React.ReactElement {
 
     const startT = useInOut && inOut.inPoint !== null ? inOut.inPoint : 0;
     const endT = useInOut && inOut.outPoint !== null ? inOut.outPoint : project.duration;
-    const totalFrames = Math.ceil((endT - startT) * preset.fps);
-
     const exportStart = performance.now();
 
     try {
-      /* ═══ Phase 1: 프레임 캡처 (B7-2) ═══ */
-      for (let i = 0; i < totalFrames; i++) {
-        if (abortRef.current) throw new Error('사용자 취소');
+      /* ═══ Phase 1: 소스 파일 수집 & FFmpeg FS에 기록 ═══ */
+      setProgress({ phase: 'init', percent: 5, currentFrame: 0,
+        totalFrames: 0, elapsedMs: 0, estimatedRemainingMs: 0,
+        message: '소스 파일 로딩 중…' });
 
-        const t = startT + i / preset.fps;
-        setCurrentTime(t);
+      // 비디오 클립 수집 (가장 위 비디오 트랙의 클립들)
+      const videoTracks = project.tracks.filter(t => t.type === 'video');
+      const audioTracks = project.tracks.filter(t => t.type === 'audio' && !t.muted);
 
-        // 렌더 대기 (2프레임 — seek + draw 보장)
-        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-        const blob = await new Promise<Blob>((resolve, reject) => {
-          canvas.toBlob(b => {
-            if (b) resolve(b); else reject(new Error('toBlob 실패'));
-          }, 'image/png');
-        });
-        const bytes = new Uint8Array(await blob.arrayBuffer());
-        await engine.writeFrame(bytes, i);
-
-        const elapsed = performance.now() - exportStart;
-        const pct = Math.round(((i + 1) / totalFrames) * 70); // 프레임=0~70%
-        setProgress({
-          phase: 'frames',
-          percent: pct,
-          currentFrame: i + 1,
-          totalFrames,
-          elapsedMs: elapsed,
-          estimatedRemainingMs: pct > 0 ? (elapsed / pct) * (100 - pct) : 0,
-          message: `프레임 캡처 ${i + 1}/${totalFrames}`,
-        });
+      // ★ B7 고도화: 캔버스 폴백 조건 체크 (텍스트 클립이나 효과가 있으면 fallback)
+      const hasOverlays = project.tracks.some(t => t.type === 'text' && t.clips.length > 0);
+      const hasTransitions = project.transitions && project.transitions.length > 0;
+      
+      if (hasOverlays || hasTransitions) {
+        await handleCanvasFallbackExport(engine, startT, endT, preset);
+        setExporting(false);
+        return;
       }
 
-      /* ═══ Phase 2: 오디오 믹스다운 (B7-3) ═══ */
-      let hasAudio = false;
-      const audioTracks = project.tracks.filter(t => t.type === 'audio' && !t.muted);
-      if (audioTracks.some(t => t.clips.length > 0)) {
-        setProgress(prev => prev ? {
-          ...prev, phase: 'audio', percent: 75, message: '오디오 믹스다운 중…',
-        } : prev);
+      const inputFiles: { filename: string; clip: Clip; asset: Asset }[] = [];
+      let fileIdx = 0;
 
-        const wavBytes = await mixdownToWav(
-          project.tracks, project.assets, startT, endT,
-        );
-        if (wavBytes) {
-          await engine.writeAudioWav(wavBytes);
-          hasAudio = true;
+      for (const track of videoTracks) {
+        for (const clip of track.clips) {
+          if (clip.disabled) continue;
+          const clipEnd = clip.startTime + clip.duration;
+          if (clipEnd <= startT || clip.startTime >= endT) continue;
+
+          const asset = project.assets.find(a => a.id === clip.assetId);
+          if (!asset?.src) continue;
+
+          const ext = asset.name?.split('.').pop() || 'mp4';
+          const fn = `input_${fileIdx}.${ext}`;
+          await engine.writeSourceVideo(fn, asset.src);
+          inputFiles.push({ filename: fn, clip, asset });
+          fileIdx++;
+
+          setProgress(prev => prev ? {
+            ...prev, percent: 10 + Math.round((fileIdx / 5) * 20),
+            message: `소스 로딩 ${fileIdx}개…`,
+          } : prev);
         }
       }
 
-      /* ═══ Phase 3: 인코딩 + 먹싱 (B7-4) ═══ */
+      /* ═══ Phase 2: 인코딩 플랜 실행 ═══ */
       setProgress(prev => prev ? {
-        ...prev, phase: 'muxing', percent: 80, message: '인코딩 시작…',
+        ...prev, phase: 'muxing', percent: 40, message: '인코딩 중…',
       } : prev);
 
-      const data = await engine.encode(preset, totalFrames, hasAudio, (p) => {
-        // 80~99% 범위로 매핑
-        setProgress({
-          ...p,
-          percent: 80 + Math.round(p.percent * 0.19),
-        });
-      });
+      let hasAudio = false;
 
-      /* ═══ Phase 4: 완료 ═══ */
-      await engine.cleanup(totalFrames);
+      // 오디오 소스도 로드
+      for (const track of audioTracks) {
+        for (const clip of track.clips) {
+          if (clip.disabled) continue;
+          const clipEnd = clip.startTime + clip.duration;
+          if (clipEnd <= startT || clip.startTime >= endT) continue;
 
+          const asset = project.assets.find(a => a.id === clip.assetId);
+          if (!asset?.src) continue;
+
+          const ext = asset.name?.split('.').pop() || 'mp4';
+          const fn = `audio_${fileIdx}.${ext}`;
+          await engine.writeSourceVideo(fn, asset.src);
+          hasAudio = true;
+          fileIdx++;
+        }
+      }
+
+      // 가장 단순한 케이스: 단일 비디오 클립 → 직접 트랜스코딩
+      if (inputFiles.length === 1) {
+        const { filename, clip } = inputFiles[0];
+        const inPt = clip.inPoint || 0;
+        const dur = Math.min(clip.duration, endT - startT);
+
+        const args: string[] = [
+          '-ss', String(inPt),
+          '-i', filename,
+          '-t', String(dur),
+          '-c:v', 'libx264',
+          '-pix_fmt', 'yuv420p',
+          '-b:v', preset.videoBitrate,
+          '-preset', 'fast',
+          '-movflags', '+faststart',
+          '-vf', `scale=${preset.width}:${preset.height}`,
+        ];
+
+        if (hasAudio) {
+          args.push('-c:a', 'aac', '-b:a', preset.audioBitrate);
+        } else {
+          args.push('-an');
+        }
+
+        args.push(`output.${preset.format}`);
+        await engine.encodeDirect(args);
+
+      } else if (inputFiles.length > 1) {
+        // 다중 클립: concat 방식
+        const concatList = inputFiles
+          .map(f => `file '${f.filename}'`)
+          .join('\n');
+        await engine.writeTextFile('concat.txt', concatList);
+
+        const args: string[] = [
+          '-f', 'concat', '-safe', '0',
+          '-i', 'concat.txt',
+          '-c:v', 'libx264',
+          '-pix_fmt', 'yuv420p',
+          '-b:v', preset.videoBitrate,
+          '-preset', 'fast',
+          '-movflags', '+faststart',
+          '-vf', `scale=${preset.width}:${preset.height}`,
+        ];
+        if (hasAudio) {
+          args.push('-c:a', 'aac', '-b:a', preset.audioBitrate);
+        } else {
+          args.push('-an');
+        }
+        args.push(`output.${preset.format}`);
+        await engine.encodeDirect(args);
+
+      } else {
+        // 클립 없음 → Canvas fallback
+        await handleCanvasFallbackExport(engine, startT, endT, preset);
+        setExporting(false);
+        return;
+      }
+
+      /* ═══ Phase 3: 결과 읽기 ═══ */
+      const data = await engine.readOutput(`output.${preset.format}`);
       const blob = new Blob([data as any], { type: `video/${preset.format}` });
       const url = URL.createObjectURL(blob);
       setResultUrl(url);
 
       const totalElapsed = performance.now() - exportStart;
       setProgress({
-        phase: 'done',
-        percent: 100,
-        currentFrame: totalFrames,
-        totalFrames,
-        elapsedMs: totalElapsed,
-        estimatedRemainingMs: 0,
+        phase: 'done', percent: 100,
+        currentFrame: 0, totalFrames: 0,
+        elapsedMs: totalElapsed, estimatedRemainingMs: 0,
         message: `✅ 완료! (${formatTime(totalElapsed)})`,
       });
 
     } catch (err: any) {
       console.error('[ExportPanel] 내보내기 실패:', err);
       setProgress(prev => prev ? {
-        ...prev,
-        phase: 'error',
+        ...prev, phase: 'error',
         message: `❌ 오류: ${err.message || err}`,
       } : null);
     }
 
     setExporting(false);
-  }, [isPlaying, togglePlay, setCurrentTime, useInOut, inOut, project, preset]);
+  }, [isPlaying, togglePlay, setCurrentTime, useInOut, inOut, project, preset, handleCanvasFallbackExport]);
 
   /* ── 취소 ── */
   const handleAbort = useCallback(() => {
