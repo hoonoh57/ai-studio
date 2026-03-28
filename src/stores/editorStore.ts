@@ -159,6 +159,8 @@ export interface EditorState {
   setActiveTab: (tab: EditorTab) => void;
   activePanel: PanelId | null;
   setActivePanel: (panel: PanelId | null) => void;
+  activeModuleId: string | null;      // 현재 활성 모듈 ID (null이면 builtin.media)
+  setActiveModuleId: (id: string) => void;
 
   /* Undo/Redo */
   undoStack: HistoryEntry[];
@@ -822,6 +824,8 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   activePanel: null,
   setActivePanel: (panel) => set({ activePanel: panel }),
+  activeModuleId: null,      // 현재 활성 모듈 ID (null이면 builtin.media)
+  setActiveModuleId: (id) => set({ activeModuleId: id }),
 
   /* ──── Undo/Redo ──── */
   undoStack: [],
