@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useCallback } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import { isVideoReady } from '@/engines/canvasRenderer';
 import { effectRegistry } from '@/engines/effectRegistry';
+import { audioEngine } from '@/engines/audioEngine';
 import type { Clip, KeyframeTrack } from '@/types/project';
 
 const CANVAS_BG = '#000000';
@@ -101,6 +102,17 @@ export function PreviewArea() {
   const fps = project?.fps ?? 30;
   const projW = project?.width ?? 1920;
   const projH = project?.height ?? 1080;
+
+  /* ─── B1-1: 오디오 엔진 초기화 ─── */
+  useEffect(() => {
+    audioEngine.init();
+    return () => { /* dispose는 앱 종료 시에만 */ };
+  }, []);
+
+  /* ─── B1-1: 사용자 인터랙션 후 AudioContext resume ─── */
+  const handleUserGesture = useCallback(() => {
+    audioEngine.resume();
+  }, []);
 
   /* ─── 헬퍼 함수들 ─── */
   function findClipAt(time: number): Clip | null {
@@ -277,9 +289,10 @@ export function PreviewArea() {
     }
 
     // ★ 핵심 수정: 피봇 기준 transform
-    // transform: 피봇 기준 이동/회전/스케일 (★ 핵심 수정)
+    // 피봇 = 캔버스 중심 + 키프레임 오프셋
     const pivotX = cw / 2 + kfX;
     const pivotY = ch / 2 + kfY;
+
     ctx.translate(pivotX, pivotY);
     if (kfRotation !== 0) {
       ctx.rotate((kfRotation * Math.PI) / 180);
@@ -326,6 +339,7 @@ export function PreviewArea() {
       cancelAnimationFrame(playAnimRef.current);
       videoARef.current?.pause();
       videoBRef.current?.pause();
+      audioEngine.syncToTimeline(currentTime, false, project.tracks);
       return;
     }
 
@@ -354,6 +368,11 @@ export function PreviewArea() {
         return;
       }
       setCurrentTime(newTime);
+      audioEngine.syncToTimeline(
+        newTime,
+        true,
+        useEditorStore.getState().project.tracks,
+      );
       playAnimRef.current = requestAnimationFrame(tick);
     };
     playAnimRef.current = requestAnimationFrame(tick);
@@ -554,7 +573,7 @@ export function PreviewArea() {
       }}>
         <button onClick={resetTime} style={btnStyle}>⏮</button>
         <button onClick={() => stepFrame(-1)} style={btnStyle}>⏪</button>
-        <button onClick={handleTogglePlay} style={{ ...btnStyle, fontSize: 20 }}>
+        <button onClick={() => { handleUserGesture(); handleTogglePlay(); }} style={{ ...btnStyle, fontSize: 20 }}>
           {isPlaying ? '⏸' : '▶'}
         </button>
         <button onClick={() => stepFrame(1)} style={btnStyle}>⏩</button>
