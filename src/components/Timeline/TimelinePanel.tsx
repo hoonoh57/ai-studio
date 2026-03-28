@@ -375,18 +375,18 @@ export const TimelinePanel: React.FC = () => {
       } else if (d.type === 'trim-left') {
         /* T-3.4: 트림 모드별 동작 */
         if (trimMode === 'slip') {
-           const sourceShift = dt;
-           updateClip(d.clipId, {
-             inPoint: Math.max(0, d.startTime + sourceShift),
-             outPoint: Math.max(0.1, d.startTime + d.originalDuration + sourceShift),
-           });
+          const sourceShift = dt;
+          updateClip(d.clipId, {
+            inPoint: Math.max(0, d.startTime + sourceShift),
+            outPoint: Math.max(0.1, d.startTime + d.originalDuration + sourceShift),
+          });
         } else {
-           const newStart = snap(Math.max(0, d.startTime + dt));
-           const shrink = newStart - d.originalStartTime;
-           updateClip(d.clipId, {
-             startTime: newStart,
-             duration: Math.max(0.1, d.originalDuration - shrink),
-           });
+          const newStart = snap(Math.max(0, d.startTime + dt));
+          const shrink = newStart - d.originalStartTime;
+          updateClip(d.clipId, {
+            startTime: newStart,
+            duration: Math.max(0.1, d.originalDuration - shrink),
+          });
         }
       } else if (d.type === 'trim-right') {
         updateClip(d.clipId, {
@@ -423,11 +423,11 @@ export const TimelinePanel: React.FC = () => {
 
       // 모든 상태를 핸들러 시점에 직접 읽기
       const state = useEditorStore.getState();
-      const { 
-        selectedClipId, currentTime, project, 
+      const {
+        selectedClipId, currentTime, project,
         canUndo, canRedo, undo, redo, pushUndo,
         removeClip, selectClip, splitClip, addMarker,
-        togglePlay, setCurrentTime, zoom, setZoom 
+        togglePlay, setCurrentTime, zoom, setZoom
       } = state;
 
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
@@ -445,7 +445,14 @@ export const TimelinePanel: React.FC = () => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
         e.preventDefault(); openProjectFile(); return;
       }
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        // ★ 키프레임 다이아몬드 호버 중이면 클립 삭제 차단
+        const isKfArea = Array.from(document.querySelectorAll(':hover')).some(
+          el => (el as HTMLElement).closest?.('[data-keyframe-area="true"]')
+        );
+        if (isKfArea) { e.preventDefault(); return; }
+
         if (selectedClipId && !isClipOnLockedTrack(selectedClipId, project.tracks)) {
           e.preventDefault();
           pushUndo('클립 삭제');
@@ -701,11 +708,11 @@ export const TimelinePanel: React.FC = () => {
           ref={mainScrollRef}
           onScroll={() => syncScroll('main')}
           className="hide-scrollbar"
-          style={{ 
-            flex: 1, 
+          style={{
+            flex: 1,
             overflowX: 'auto',
             overflowY: 'auto',
-            position: 'relative' 
+            position: 'relative'
           }}
         >
           <div

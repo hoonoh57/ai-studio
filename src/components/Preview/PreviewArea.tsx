@@ -2,9 +2,75 @@ import React, { useRef, useEffect, useCallback } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import { isVideoReady } from '@/engines/canvasRenderer';
 import { effectRegistry } from '@/engines/effectRegistry';
+import type { Clip, KeyframeTrack } from '@/types/project';
 
 const CANVAS_BG = '#000000';
 const PRELOAD_AHEAD = 0.5;
+
+/* ★ 이징 함수 (canvasRenderer.ts와 동일) */
+function applyEasing(t: number, easing: string): number {
+  switch (easing) {
+    case 'linear': return t;
+    case 'ease-in': return t * t;
+    case 'ease-out': return t * (2 - t);
+    case 'ease-in-out': return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    case 'ease-in-cubic': return t * t * t;
+    case 'ease-out-cubic': { const u = t - 1; return u * u * u + 1; }
+    case 'ease-in-out-cubic':
+      return t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1;
+    case 'ease-in-back': return 2.70158 * t * t * t - 1.70158 * t * t;
+    case 'ease-out-back': {
+      const c = 1.70158; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2);
+    }
+    case 'ease-out-bounce': {
+      if (t < 1 / 2.75) return 7.5625 * t * t;
+      if (t < 2 / 2.75) return 7.5625 * (t -= 1.5 / 2.75) * t + 0.75;
+      if (t < 2.5 / 2.75) return 7.5625 * (t -= 2.25 / 2.75) * t + 0.9375;
+      return 7.5625 * (t -= 2.625 / 2.75) * t + 0.984375;
+    }
+    case 'ease-out-elastic': {
+      if (t === 0 || t === 1) return t;
+      return Math.pow(2, -10 * t) * Math.sin((t - 0.075) * (2 * Math.PI) / 0.3) + 1;
+    }
+    case 'spring': {
+      return Math.min(1, Math.max(0, Math.pow(2, -10 * t) * Math.sin((t - 0.1) * 5 * Math.PI) + 1));
+    }
+    default: return t;
+  }
+}
+
+/* ★ 키프레임 보간 — 클립 내 상대 시간 기준 */
+function interpolateKfValue(
+  kfTracks: KeyframeTrack[] | undefined,
+  property: string,
+  relativeTime: number,
+  defaultValue: number,
+): number {
+  if (!kfTracks) return defaultValue;
+  const kt = kfTracks.find(t => t.property === property && t.enabled);
+  if (!kt || kt.keyframes.length === 0) return defaultValue;
+
+  const kfs = kt.keyframes;
+  if (relativeTime <= kfs[0].time) return kfs[0].value;
+  if (relativeTime >= kfs[kfs.length - 1].time) return kfs[kfs.length - 1].value;
+
+  for (let i = 0; i < kfs.length - 1; i++) {
+    if (relativeTime >= kfs[i].time && relativeTime <= kfs[i + 1].time) {
+      const t0 = kfs[i].time, t1 = kfs[i + 1].time;
+      const v0 = kfs[i].value, v1 = kfs[i + 1].value;
+      const progress = (t1 - t0) > 0 ? (relativeTime - t0) / (t1 - t0) : 0;
+      const eased = applyEasing(progress, kfs[i + 1].easing || 'linear');
+      return v0 + (v1 - v0) * eased;
+    }
+  }
+  return defaultValue;
+}
+
+/* ★ 키프레임 트랙에 특정 속성이 활성화되어 있는지 확인 */
+function hasKfProperty(kfTracks: KeyframeTrack[] | undefined, property: string): boolean {
+  if (!kfTracks) return false;
+  return kfTracks.some(t => t.property === property && t.enabled && t.keyframes.length > 0);
+}
 
 export function PreviewArea() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -17,7 +83,6 @@ export function PreviewArea() {
   const loadedB = useRef<{ src: string; clipId: string }>({ src: '', clipId: '' });
   const lastFrameData = useRef<ImageData | null>(null);
 
-  // 현재 어떤 비디오가 "주 재생" 역할인지 추적
   const activeVideoRef = useRef<'A' | 'B'>('A');
 
   const currentTime = useEditorStore(s => s.currentTime);
@@ -91,7 +156,7 @@ export function PreviewArea() {
           video.currentTime = Math.max(0, seekTime);
         }
       }
-      return false; // ★ 소스 변경 없음
+      return false;
     }
     video.src = src;
     video.load();
@@ -101,10 +166,9 @@ export function PreviewArea() {
         video.currentTime = Math.max(0, seekTime);
       }, { once: true });
     }
-    return true; // ★ 소스 변경됨
+    return true;
   }
 
-  /* ★ 비디오 재생 보장 — paused 상태면 play() 호출 */
   function ensurePlaying(video: HTMLVideoElement, speed: number) {
     video.muted = true;
     video.playbackRate = speed;
@@ -113,11 +177,59 @@ export function PreviewArea() {
     }
   }
 
-  function drawWithAspect(
+  /* ★ 키프레임 기반 transform + filter 적용 후 비디오 그리기 */
+  function drawClipWithKeyframes(
     source: CanvasImageSource,
     ctx: CanvasRenderingContext2D,
     cw: number, ch: number,
+    clip: Clip,
+    relTime: number,
   ) {
+    const kf = clip.keyframeTracks;
+
+    // 1) 키프레임에서 보간된 값 읽기
+    const kfX = interpolateKfValue(kf, 'x', relTime, clip.transform?.x ?? 0);
+    const kfY = interpolateKfValue(kf, 'y', relTime, clip.transform?.y ?? 0);
+    const kfScale = interpolateKfValue(kf, 'scale', relTime, clip.transform?.scale ?? 1);
+    const kfRotation = interpolateKfValue(kf, 'rotation', relTime, clip.transform?.rotation ?? 0);
+    const kfOpacity = interpolateKfValue(kf, 'opacity', relTime, clip.opacity ?? 1);
+    const kfBlur = interpolateKfValue(kf, 'blur', relTime, 0);
+    const kfBrightness = interpolateKfValue(kf, 'brightness', relTime, 0);
+    const kfContrast = interpolateKfValue(kf, 'contrast', relTime, 0);
+
+    // 2) CSS filter 문자열 생성 (clip.filters + 키프레임 기반 필터)
+    const filterParts: string[] = [];
+
+    // clip.filters (이펙트 패널에서 추가한 필터) 적용
+    if (clip.filters && clip.filters.length > 0) {
+      for (const f of clip.filters) {
+        const p = f.params || {};
+        switch (f.name) {
+          case 'Brightness': filterParts.push(`brightness(${1 + (Number(p.brightness) || 0) / 100})`); break;
+          case 'Contrast': filterParts.push(`contrast(${1 + (Number(p.contrast) || 0) / 100})`); break;
+          case 'Saturation': filterParts.push(`saturate(${1 + (Number(p.saturation) || 0) / 100})`); break;
+          case 'Blur': filterParts.push(`blur(${Math.max(0, Number(p.radius) || 0)}px)`); break;
+          case 'Grayscale': filterParts.push(`grayscale(${(Number(p.intensity) || 0) / 100})`); break;
+          case 'Sepia': filterParts.push(`sepia(${(Number(p.intensity) || 0) / 100})`); break;
+          case 'Hue Shift': filterParts.push(`hue-rotate(${Number(p.degrees) || 0}deg)`); break;
+          case 'Invert': filterParts.push(`invert(${(Number(p.intensity) || 100) / 100})`); break;
+          case 'Opacity': filterParts.push(`opacity(${(Number(p.opacity) ?? 100) / 100})`); break;
+        }
+      }
+    }
+
+    // 키프레임 기반 필터 (이펙트 패널과 별개)
+    if (hasKfProperty(kf, 'blur') && kfBlur > 0) {
+      filterParts.push(`blur(${kfBlur}px)`);
+    }
+    if (hasKfProperty(kf, 'brightness') && kfBrightness !== 0) {
+      filterParts.push(`brightness(${1 + kfBrightness / 100})`);
+    }
+    if (hasKfProperty(kf, 'contrast') && kfContrast !== 0) {
+      filterParts.push(`contrast(${1 + kfContrast / 100})`);
+    }
+
+    // 3) 소스 원본 크기 → aspect-fit 계산
     let sw = cw, sh = ch;
     if (source instanceof HTMLVideoElement) {
       sw = source.videoWidth || cw;
@@ -128,59 +240,39 @@ export function PreviewArea() {
     }
     const srcAspect = sw / sh;
     const dstAspect = cw / ch;
-    let dx: number, dy: number, dw: number, dh: number;
+    let dw: number, dh: number, dx: number, dy: number;
     if (srcAspect > dstAspect) {
       dw = cw; dh = cw / srcAspect; dx = 0; dy = (ch - dh) / 2;
     } else {
       dh = ch; dw = ch * srcAspect; dx = (cw - dw) / 2; dy = 0;
     }
+
+    // 4) canvas 상태 저장 → transform + filter 적용 → 그리기 → 복원
+    ctx.save();
+
+    // opacity
+    ctx.globalAlpha = Math.max(0, Math.min(1, kfOpacity));
+
+    // CSS filter
+    if (filterParts.length > 0) {
+      ctx.filter = filterParts.join(' ');
+    }
+
+    // transform: 중심점 기준 이동/회전/스케일
+    const cx = cw / 2 + kfX;
+    const cy = ch / 2 + kfY;
+    ctx.translate(cx, cy);
+    if (kfRotation !== 0) {
+      ctx.rotate((kfRotation * Math.PI) / 180);
+    }
+    if (kfScale !== 1) {
+      ctx.scale(kfScale, kfScale);
+    }
+    ctx.translate(-cw / 2, -ch / 2);
+
     ctx.drawImage(source, dx, dy, dw, dh);
-  }
 
-  // ★ 필터 효과 적용 (CSS filter 기반)
-  function applyClipFilters(ctx: CanvasRenderingContext2D, filters: any[]) {
-    if (!filters || filters.length === 0) return;
-
-    const parts: string[] = [];
-    for (const f of filters) {
-      const p = f.params || {};
-      switch (f.name) {
-        case 'Brightness':
-          parts.push(`brightness(${1 + (Number(p.brightness) || 0) / 100})`);
-          break;
-        case 'Contrast':
-          parts.push(`contrast(${1 + (Number(p.contrast) || 0) / 100})`);
-          break;
-        case 'Saturation':
-          parts.push(`saturate(${1 + (Number(p.saturation) || 0) / 100})`);
-          break;
-        case 'Blur':
-          parts.push(`blur(${Math.max(0, Number(p.radius) || 0)}px)`);
-          break;
-        case 'Grayscale':
-          parts.push(`grayscale(${(Number(p.intensity) || 0) / 100})`);
-          break;
-        case 'Sepia':
-          parts.push(`sepia(${(Number(p.intensity) || 0) / 100})`);
-          break;
-        case 'Hue Shift':
-          parts.push(`hue-rotate(${Number(p.degrees) || 0}deg)`);
-          break;
-        case 'Invert':
-          parts.push(`invert(${(Number(p.intensity) || 100) / 100})`);
-          break;
-        case 'Opacity':
-          parts.push(`opacity(${(Number(p.opacity) ?? 100) / 100})`);
-          break;
-      }
-    }
-    if (parts.length > 0) {
-      ctx.filter = parts.join(' ');
-    }
-  }
-
-  function resetFilter(ctx: CanvasRenderingContext2D) {
-    ctx.filter = 'none';
+    ctx.restore();
   }
 
   /* ─── 캔버스 크기 ─── */
@@ -226,20 +318,17 @@ export function PreviewArea() {
       const speed = clip?.speed || 1;
       const newTime = state.currentTime + dt * speed;
 
-      // ★ 실제 마지막 클립 끝 시간 계산 (project.duration이 아닌 미디어 끝)
       let mediaEnd = 0;
       for (const track of state.project.tracks) {
         for (const c of track.clips) {
           mediaEnd = Math.max(mediaEnd, c.startTime + c.duration);
         }
       }
-      // 미디어가 없으면 project.duration 사용
       if (mediaEnd <= 0) mediaEnd = state.project?.duration || 60;
 
       if (newTime >= mediaEnd) {
         setCurrentTime(mediaEnd);
         useEditorStore.setState({ isPlaying: false });
-        // 비디오 요소도 정지
         videoARef.current?.pause();
         videoBRef.current?.pause();
         return;
@@ -287,7 +376,6 @@ export function PreviewArea() {
         ensureVideoLoaded(videoA, loadedA, srcA, trans.clipA.id, localA);
         ensureVideoLoaded(videoB, loadedB, srcB, trans.clipB.id, localB);
 
-        // ★ 전환 중에는 양쪽 다 재생
         if (playing) {
           ensurePlaying(videoA, trans.clipA.speed || 1);
           ensurePlaying(videoB, trans.clipB.speed || 1);
@@ -312,46 +400,42 @@ export function PreviewArea() {
               didDraw = true;
             } catch {
               ctx.globalAlpha = 1 - trans.progress;
-              drawWithAspect(videoA, ctx, w, h);
+              ctx.drawImage(videoA, 0, 0, w, h);
               ctx.globalAlpha = trans.progress;
-              drawWithAspect(videoB, ctx, w, h);
+              ctx.drawImage(videoB, 0, 0, w, h);
               ctx.globalAlpha = 1;
               didDraw = true;
             }
           } else {
             ctx.globalAlpha = 1 - trans.progress;
-            drawWithAspect(videoA, ctx, w, h);
+            ctx.drawImage(videoA, 0, 0, w, h);
             ctx.globalAlpha = trans.progress;
-            drawWithAspect(videoB, ctx, w, h);
+            ctx.drawImage(videoB, 0, 0, w, h);
             ctx.globalAlpha = 1;
             didDraw = true;
           }
         } else if (readyA) {
           ctx.clearRect(0, 0, w, h);
-          drawWithAspect(videoA, ctx, w, h);
+          ctx.drawImage(videoA, 0, 0, w, h);
           didDraw = true;
         } else if (readyB) {
           ctx.clearRect(0, 0, w, h);
-          drawWithAspect(videoB, ctx, w, h);
+          ctx.drawImage(videoB, 0, 0, w, h);
           didDraw = true;
         }
 
-        // ══════ 일반 재생 ══════
+        // ══════ 일반 재생 — ★ 키프레임 보간 적용 ══════
       } else if (clip) {
         const srcA = getAssetSrc(clip.assetId);
         const localA = time - clip.startTime + (clip.inPoint || 0);
+        const relTime = time - clip.startTime; // ★ 클립 내 상대 시간
 
-        // ★ 핵심: videoB에 이미 이 클립이 사전 로드되어 있으면 스왑
         if (loadedB.current.clipId === clip.id && loadedB.current.src === srcA) {
-          // videoB가 이미 이 클립 → A와 B의 역할 교체
           const tempLoaded = { ...loadedA.current };
           loadedA.current = { ...loadedB.current };
           loadedB.current = tempLoaded;
 
-          // video 요소의 src도 스왑 (실제로는 ref만 교체하면 안 되므로, 논리적 주 비디오를 추적)
-          // → 대신 videoB를 주 렌더링 소스로 사용
           if (playing) ensurePlaying(videoB, clip.speed || 1);
-
           if (!playing) {
             if (Math.abs(videoB.currentTime - localA) > 0.05) {
               videoB.currentTime = Math.max(0, localA);
@@ -360,25 +444,16 @@ export function PreviewArea() {
 
           if (isVideoReady(videoB)) {
             ctx.clearRect(0, 0, w, h);
-            // ★ 필터 적용
-            if (clip.filters) {
-              applyClipFilters(ctx, clip.filters);
-            }
-            drawWithAspect(videoB, ctx, w, h);
-            resetFilter(ctx);
+            drawClipWithKeyframes(videoB, ctx, w, h, clip, relTime);
             didDraw = true;
           }
 
-          // videoA에 이 클립을 로드 (백그라운드, 다음 프레임부터 A가 주 역할)
           ensureVideoLoaded(videoA, loadedA, srcA, clip.id, localA);
         } else {
-          // 일반: videoA에 현재 클립
-          const srcChanged = ensureVideoLoaded(videoA, loadedA, srcA, clip.id, localA);
+          ensureVideoLoaded(videoA, loadedA, srcA, clip.id, localA);
 
-          // ★ src 변경 후 재생 보장
           if (playing) ensurePlaying(videoA, clip.speed || 1);
 
-          // 다음 클립 사전 로드
           const clipEnd = clip.startTime + clip.duration;
           const timeToEnd = clipEnd - time;
           if (timeToEnd <= PRELOAD_AHEAD && timeToEnd > 0) {
@@ -393,21 +468,11 @@ export function PreviewArea() {
 
           if (isVideoReady(videoA)) {
             ctx.clearRect(0, 0, w, h);
-            // ★ 필터 적용
-            if (clip.filters) {
-              applyClipFilters(ctx, clip.filters);
-            }
-            drawWithAspect(videoA, ctx, w, h);
-            resetFilter(ctx);
+            drawClipWithKeyframes(videoA, ctx, w, h, clip, relTime);
             didDraw = true;
           } else if (isVideoReady(videoB) && loadedB.current.clipId === clip.id) {
             ctx.clearRect(0, 0, w, h);
-            // ★ 필터 적용 (B fallback에도 적용)
-            if (clip.filters) {
-              applyClipFilters(ctx, clip.filters);
-            }
-            drawWithAspect(videoB, ctx, w, h);
-            resetFilter(ctx);
+            drawClipWithKeyframes(videoB, ctx, w, h, clip, relTime);
             didDraw = true;
           }
         }
