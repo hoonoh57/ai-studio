@@ -137,6 +137,52 @@ export function PreviewArea() {
     ctx.drawImage(source, dx, dy, dw, dh);
   }
 
+  // ★ 필터 효과 적용 (CSS filter 기반)
+  function applyClipFilters(ctx: CanvasRenderingContext2D, filters: any[]) {
+    if (!filters || filters.length === 0) return;
+
+    const parts: string[] = [];
+    for (const f of filters) {
+      const p = f.params || {};
+      switch (f.name) {
+        case 'Brightness':
+          parts.push(`brightness(${1 + (Number(p.brightness) || 0) / 100})`);
+          break;
+        case 'Contrast':
+          parts.push(`contrast(${1 + (Number(p.contrast) || 0) / 100})`);
+          break;
+        case 'Saturation':
+          parts.push(`saturate(${1 + (Number(p.saturation) || 0) / 100})`);
+          break;
+        case 'Blur':
+          parts.push(`blur(${Math.max(0, Number(p.radius) || 0)}px)`);
+          break;
+        case 'Grayscale':
+          parts.push(`grayscale(${(Number(p.intensity) || 0) / 100})`);
+          break;
+        case 'Sepia':
+          parts.push(`sepia(${(Number(p.intensity) || 0) / 100})`);
+          break;
+        case 'Hue Shift':
+          parts.push(`hue-rotate(${Number(p.degrees) || 0}deg)`);
+          break;
+        case 'Invert':
+          parts.push(`invert(${(Number(p.intensity) || 100) / 100})`);
+          break;
+        case 'Opacity':
+          parts.push(`opacity(${(Number(p.opacity) ?? 100) / 100})`);
+          break;
+      }
+    }
+    if (parts.length > 0) {
+      ctx.filter = parts.join(' ');
+    }
+  }
+
+  function resetFilter(ctx: CanvasRenderingContext2D) {
+    ctx.filter = 'none';
+  }
+
   /* ─── 캔버스 크기 ─── */
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -314,7 +360,12 @@ export function PreviewArea() {
 
           if (isVideoReady(videoB)) {
             ctx.clearRect(0, 0, w, h);
+            // ★ 필터 적용
+            if (clip.filters) {
+              applyClipFilters(ctx, clip.filters);
+            }
             drawWithAspect(videoB, ctx, w, h);
+            resetFilter(ctx);
             didDraw = true;
           }
 
@@ -342,11 +393,21 @@ export function PreviewArea() {
 
           if (isVideoReady(videoA)) {
             ctx.clearRect(0, 0, w, h);
+            // ★ 필터 적용
+            if (clip.filters) {
+              applyClipFilters(ctx, clip.filters);
+            }
             drawWithAspect(videoA, ctx, w, h);
+            resetFilter(ctx);
             didDraw = true;
           } else if (isVideoReady(videoB) && loadedB.current.clipId === clip.id) {
             ctx.clearRect(0, 0, w, h);
+            // ★ 필터 적용 (B fallback에도 적용)
+            if (clip.filters) {
+              applyClipFilters(ctx, clip.filters);
+            }
             drawWithAspect(videoB, ctx, w, h);
+            resetFilter(ctx);
             didDraw = true;
           }
         }

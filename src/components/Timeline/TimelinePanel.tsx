@@ -45,91 +45,97 @@ const TimelineHScrollBar: React.FC<{
   totalW: number;
 }> = ({ scrollRef, totalW }) => {
   const trackRef = useRef<HTMLDivElement>(null);
-  const [thumbLeft, setThumbLeft] = useState(0);
-  const [thumbWidth, setThumbWidth] = useState(100);
+  const [thumbState, setThumbState] = useState({ left: 0, width: 50 });
   const dragRef = useRef<{ startX: number; startScrollLeft: number } | null>(null);
 
-  // 스크롤 동기화
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+
     const sync = () => {
+      const trackEl = trackRef.current;
+      if (!trackEl) return;
       const viewW = el.clientWidth;
       const scrollW = el.scrollWidth;
+      const trackW = trackEl.clientWidth;
+
       if (scrollW <= viewW) {
-        setThumbWidth(100); // %
-        setThumbLeft(0);
+        // 스크롤 불필요 → thumb = 트랙 전체
+        setThumbState({ left: 0, width: trackW });
         return;
       }
+
       const ratio = viewW / scrollW;
-      const trackEl = trackRef.current;
-      const trackW = trackEl ? trackEl.clientWidth : viewW;
-      const currentThumbW = Math.max(30, ratio * trackW);
-      setThumbWidth(currentThumbW);
-      const scrollRatio = el.scrollLeft / (scrollW - viewW);
-      setThumbLeft(scrollRatio * (trackW - currentThumbW));
+      const tw = Math.max(30, ratio * trackW);
+      const scrollMax = scrollW - viewW;
+      const scrollRatio = scrollMax > 0 ? el.scrollLeft / scrollMax : 0;
+      const tl = scrollRatio * (trackW - tw);
+
+      setThumbState({ left: tl, width: tw });
     };
+
     sync();
     el.addEventListener('scroll', sync);
     const ro = new ResizeObserver(sync);
     ro.observe(el);
-    return () => {
-      el.removeEventListener('scroll', sync);
-      ro.disconnect();
-    };
+    return () => { el.removeEventListener('scroll', sync); ro.disconnect(); };
   }, [scrollRef, totalW]);
 
-  // 드래그
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       const d = dragRef.current;
       const el = scrollRef.current;
       const trackEl = trackRef.current;
       if (!d || !el || !trackEl) return;
+      e.preventDefault();
+
       const dx = e.clientX - d.startX;
       const trackW = trackEl.clientWidth;
       const scrollW = el.scrollWidth;
       const viewW = el.clientWidth;
       const scrollRange = scrollW - viewW;
-      const trackRange = trackW - thumbWidth;
+      const trackRange = trackW - thumbState.width;
       if (trackRange <= 0) return;
-      el.scrollLeft = d.startScrollLeft + (dx / trackRange) * scrollRange;
+
+      el.scrollLeft = Math.max(0, Math.min(scrollRange,
+        d.startScrollLeft + (dx / trackRange) * scrollRange
+      ));
     };
     const onUp = () => { dragRef.current = null; };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-    return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-  }, [scrollRef, thumbWidth]);
+    return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  }, [scrollRef, thumbState.width]);
 
   const handleThumbDown = (e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     const el = scrollRef.current;
     if (!el) return;
     dragRef.current = { startX: e.clientX, startScrollLeft: el.scrollLeft };
   };
 
-  // 트랙 클릭 → 해당 위치로 점프
   const handleTrackClick = (e: React.MouseEvent) => {
+    // thumb 위를 클릭하면 무시 (드래그로 처리)
+    if (e.target !== trackRef.current) return;
     const el = scrollRef.current;
     const trackEl = trackRef.current;
     if (!el || !trackEl) return;
     const rect = trackEl.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const ratio = clickX / rect.width;
-    el.scrollLeft = ratio * (el.scrollWidth - el.clientWidth);
+    const scrollMax = el.scrollWidth - el.clientWidth;
+    el.scrollLeft = ratio * scrollMax;
   };
 
   return (
     <div
       ref={trackRef}
-      onClick={handleTrackClick}
+      onMouseDown={handleTrackClick}
       style={{
-        height: SCROLLBAR_H,
-        background: 'var(--bg-tertiary, #1a1a2e)',
-        borderTop: '1px solid var(--border-secondary, #333)',
+        height: 16,
+        background: '#111122',
+        borderTop: '1px solid #333',
         position: 'relative',
         cursor: 'pointer',
         flexShrink: 0,
@@ -140,15 +146,15 @@ const TimelineHScrollBar: React.FC<{
         onMouseDown={handleThumbDown}
         style={{
           position: 'absolute',
-          top: 2,
-          left: thumbLeft,
-          width: thumbWidth,
-          height: SCROLLBAR_H - 4,
-          background: 'var(--accent, #6c5ce7)',
-          borderRadius: 4,
+          top: 3,
+          left: thumbState.left,
+          width: thumbState.width,
+          height: 10,
+          background: '#6c5ce7',
+          borderRadius: 5,
           cursor: 'grab',
-          opacity: 0.7,
-          transition: dragRef.current ? 'none' : 'left 0.05s',
+          opacity: 0.8,
+          minWidth: 30,
         }}
       />
     </div>
