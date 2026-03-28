@@ -799,13 +799,14 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   trimMode: 'normal',
   setTrimMode: (m) => set({ trimMode: m }),
   recalcDuration: () => set((s) => {
-    let max = 10;
+    let max = 0;
     for (const t of s.project.tracks) {
       for (const c of t.clips) {
         max = Math.max(max, c.startTime + c.duration);
       }
     }
-    return { project: { ...s.project, duration: max + 5 } };
+    // 타임라인에 약간의 여유(0.5초)만 추가, 빈 화면 최소화
+    return { project: { ...s.project, duration: Math.max(10, max + 0.5) } };
   }),
 
   /* ──── 스킬/탭/패널 ──── */

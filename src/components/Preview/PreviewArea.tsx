@@ -4,7 +4,7 @@ import { isVideoReady } from '@/engines/canvasRenderer';
 import { effectRegistry } from '@/engines/effectRegistry';
 
 const CANVAS_BG = '#000000';
-const PRELOAD_AHEAD = 0.5; // 다음 클립 사전 로드 시간(초)
+const PRELOAD_AHEAD = 0.5;
 
 export function PreviewArea() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -13,12 +13,12 @@ export function PreviewArea() {
   const containerRef = useRef<HTMLDivElement>(null);
   const playAnimRef = useRef<number>(0);
 
-  // 현재 각 비디오에 로드된 src + clipId 추적
   const loadedA = useRef<{ src: string; clipId: string }>({ src: '', clipId: '' });
   const loadedB = useRef<{ src: string; clipId: string }>({ src: '', clipId: '' });
-
-  // 마지막으로 성공적으로 그린 프레임 보존 (검은색 방지)
   const lastFrameData = useRef<ImageData | null>(null);
+
+  // 현재 어떤 비디오가 "주 재생" 역할인지 추적
+  const activeVideoRef = useRef<'A' | 'B'>('A');
 
   const currentTime = useEditorStore(s => s.currentTime);
   const setCurrentTime = useEditorStore(s => s.setCurrentTime);
@@ -36,9 +36,7 @@ export function PreviewArea() {
     for (const track of state.project.tracks) {
       if (!track.clips) continue;
       for (const clip of track.clips) {
-        if (time >= clip.startTime && time < clip.startTime + clip.duration) {
-          return clip;
-        }
+        if (time >= clip.startTime && time < clip.startTime + clip.duration) return clip;
       }
     }
     return null;
@@ -50,9 +48,7 @@ export function PreviewArea() {
       if (!track.clips) continue;
       const sorted = [...track.clips].sort((a, b) => a.startTime - b.startTime);
       const idx = sorted.findIndex(c => c.id === currentClip.id);
-      if (idx >= 0 && idx < sorted.length - 1) {
-        return sorted[idx + 1];
-      }
+      if (idx >= 0 && idx < sorted.length - 1) return sorted[idx + 1];
     }
     return null;
   }
@@ -84,24 +80,19 @@ export function PreviewArea() {
     return state.project.assets?.find(a => a.id === assetId)?.src || '';
   }
 
-  /* ─── 비디오 로드 (변경 시에만) ─── */
   function ensureVideoLoaded(
     video: HTMLVideoElement,
     ref: React.MutableRefObject<{ src: string; clipId: string }>,
-    src: string,
-    clipId: string,
-    seekTime?: number,
+    src: string, clipId: string, seekTime?: number,
   ) {
     if (ref.current.clipId === clipId && ref.current.src === src) {
-      // 이미 같은 소스 로드됨 → seek만
       if (seekTime !== undefined && !useEditorStore.getState().isPlaying) {
         if (Math.abs(video.currentTime - seekTime) > 0.05) {
           video.currentTime = Math.max(0, seekTime);
         }
       }
-      return;
+      return false; // ★ 소스 변경 없음
     }
-    // 새 소스 로드
     video.src = src;
     video.load();
     ref.current = { src, clipId };
@@ -110,9 +101,18 @@ export function PreviewArea() {
         video.currentTime = Math.max(0, seekTime);
       }, { once: true });
     }
+    return true; // ★ 소스 변경됨
   }
 
-  /* ─── drawWithAspect ─── */
+  /* ★ 비디오 재생 보장 — paused 상태면 play() 호출 */
+  function ensurePlaying(video: HTMLVideoElement, speed: number) {
+    video.muted = true;
+    video.playbackRate = speed;
+    if (video.paused && video.src) {
+      video.play().catch(() => { });
+    }
+  }
+
   function drawWithAspect(
     source: CanvasImageSource,
     ctx: CanvasRenderingContext2D,
@@ -170,11 +170,7 @@ export function PreviewArea() {
       videoBRef.current?.pause();
       return;
     }
-    const videoA = videoARef.current;
-    if (videoA && videoA.src) {
-      videoA.muted = true;
-      videoA.play().catch(() => { });
-    }
+
     let lastTs = performance.now();
     const tick = (now: number) => {
       const dt = (now - lastTs) / 1000;
@@ -183,10 +179,23 @@ export function PreviewArea() {
       const clip = findClipAt(state.currentTime);
       const speed = clip?.speed || 1;
       const newTime = state.currentTime + dt * speed;
-      const maxTime = state.project?.duration || 60;
-      if (newTime >= maxTime) {
-        setCurrentTime(maxTime);
+
+      // ★ 실제 마지막 클립 끝 시간 계산 (project.duration이 아닌 미디어 끝)
+      let mediaEnd = 0;
+      for (const track of state.project.tracks) {
+        for (const c of track.clips) {
+          mediaEnd = Math.max(mediaEnd, c.startTime + c.duration);
+        }
+      }
+      // 미디어가 없으면 project.duration 사용
+      if (mediaEnd <= 0) mediaEnd = state.project?.duration || 60;
+
+      if (newTime >= mediaEnd) {
+        setCurrentTime(mediaEnd);
         useEditorStore.setState({ isPlaying: false });
+        // 비디오 요소도 정지
+        videoARef.current?.pause();
+        videoBRef.current?.pause();
         return;
       }
       setCurrentTime(newTime);
@@ -213,13 +222,13 @@ export function PreviewArea() {
 
       const state = useEditorStore.getState();
       const time = state.currentTime;
+      const playing = state.isPlaying;
       const w = canvas.width;
       const h = canvas.height;
       if (w === 0 || h === 0) { rafId = requestAnimationFrame(draw); return; }
 
       const trans = findTransitionAt(time);
       const clip = findClipAt(time);
-
       let didDraw = false;
 
       // ══════ 전환 구간 ══════
@@ -231,6 +240,12 @@ export function PreviewArea() {
 
         ensureVideoLoaded(videoA, loadedA, srcA, trans.clipA.id, localA);
         ensureVideoLoaded(videoB, loadedB, srcB, trans.clipB.id, localB);
+
+        // ★ 전환 중에는 양쪽 다 재생
+        if (playing) {
+          ensurePlaying(videoA, trans.clipA.speed || 1);
+          ensurePlaying(videoB, trans.clipB.speed || 1);
+        }
 
         const readyA = isVideoReady(videoA);
         const readyB = isVideoReady(videoB);
@@ -274,47 +289,73 @@ export function PreviewArea() {
           drawWithAspect(videoB, ctx, w, h);
           didDraw = true;
         }
-        // 둘 다 미준비 → didDraw = false → 이전 프레임 유지
 
         // ══════ 일반 재생 ══════
       } else if (clip) {
         const srcA = getAssetSrc(clip.assetId);
         const localA = time - clip.startTime + (clip.inPoint || 0);
-        ensureVideoLoaded(videoA, loadedA, srcA, clip.id, localA);
 
-        // ★ 다음 클립 사전 로드 (클립 끝나기 PRELOAD_AHEAD초 전)
-        const clipEnd = clip.startTime + clip.duration;
-        const timeToEnd = clipEnd - time;
-        if (timeToEnd <= PRELOAD_AHEAD && timeToEnd > 0) {
-          const nextClip = findNextClip(clip);
-          if (nextClip) {
-            const nextSrc = getAssetSrc(nextClip.assetId);
-            if (nextSrc) {
-              ensureVideoLoaded(videoB, loadedB, nextSrc, nextClip.id, nextClip.inPoint || 0);
+        // ★ 핵심: videoB에 이미 이 클립이 사전 로드되어 있으면 스왑
+        if (loadedB.current.clipId === clip.id && loadedB.current.src === srcA) {
+          // videoB가 이미 이 클립 → A와 B의 역할 교체
+          const tempLoaded = { ...loadedA.current };
+          loadedA.current = { ...loadedB.current };
+          loadedB.current = tempLoaded;
+
+          // video 요소의 src도 스왑 (실제로는 ref만 교체하면 안 되므로, 논리적 주 비디오를 추적)
+          // → 대신 videoB를 주 렌더링 소스로 사용
+          if (playing) ensurePlaying(videoB, clip.speed || 1);
+
+          if (!playing) {
+            if (Math.abs(videoB.currentTime - localA) > 0.05) {
+              videoB.currentTime = Math.max(0, localA);
             }
           }
-        }
 
-        if (isVideoReady(videoA)) {
-          ctx.clearRect(0, 0, w, h);
-          drawWithAspect(videoA, ctx, w, h);
-          didDraw = true;
-        } else if (isVideoReady(videoB) && loadedB.current.clipId === clip.id) {
-          // videoA가 아직 준비 안됐지만, videoB에 같은 클립이 있으면 그걸 사용
-          ctx.clearRect(0, 0, w, h);
-          drawWithAspect(videoB, ctx, w, h);
-          didDraw = true;
+          if (isVideoReady(videoB)) {
+            ctx.clearRect(0, 0, w, h);
+            drawWithAspect(videoB, ctx, w, h);
+            didDraw = true;
+          }
+
+          // videoA에 이 클립을 로드 (백그라운드, 다음 프레임부터 A가 주 역할)
+          ensureVideoLoaded(videoA, loadedA, srcA, clip.id, localA);
+        } else {
+          // 일반: videoA에 현재 클립
+          const srcChanged = ensureVideoLoaded(videoA, loadedA, srcA, clip.id, localA);
+
+          // ★ src 변경 후 재생 보장
+          if (playing) ensurePlaying(videoA, clip.speed || 1);
+
+          // 다음 클립 사전 로드
+          const clipEnd = clip.startTime + clip.duration;
+          const timeToEnd = clipEnd - time;
+          if (timeToEnd <= PRELOAD_AHEAD && timeToEnd > 0) {
+            const nextClip = findNextClip(clip);
+            if (nextClip) {
+              const nextSrc = getAssetSrc(nextClip.assetId);
+              if (nextSrc) {
+                ensureVideoLoaded(videoB, loadedB, nextSrc, nextClip.id, nextClip.inPoint || 0);
+              }
+            }
+          }
+
+          if (isVideoReady(videoA)) {
+            ctx.clearRect(0, 0, w, h);
+            drawWithAspect(videoA, ctx, w, h);
+            didDraw = true;
+          } else if (isVideoReady(videoB) && loadedB.current.clipId === clip.id) {
+            ctx.clearRect(0, 0, w, h);
+            drawWithAspect(videoB, ctx, w, h);
+            didDraw = true;
+          }
         }
       }
 
-      // ★ 핵심: 그리지 못했으면 이전 프레임 복원 (검은색 방지)
+      // 프레임 보존
       if (didDraw) {
-        // 성공한 프레임 저장
-        try {
-          lastFrameData.current = ctx.getImageData(0, 0, w, h);
-        } catch { /* ignore */ }
+        try { lastFrameData.current = ctx.getImageData(0, 0, w, h); } catch { }
       } else if (lastFrameData.current) {
-        // 이전 프레임 복원
         if (lastFrameData.current.width === w && lastFrameData.current.height === h) {
           ctx.putImageData(lastFrameData.current, 0, 0);
         }

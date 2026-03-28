@@ -43,7 +43,7 @@ export const TimelinePanel: React.FC = () => {
     setCurrentTime, selectClip, addClip, updateClip, removeClip,
     recalcDuration, currentTime, pushUndo, undo, redo, canUndo, canRedo,
     splitClip, addMarker, togglePlay, skillLevel, addTrackChecked,
-    reorderTracks, moveClipToTrack, linkClips, unlinkClip, trimMode,
+    reorderTracks, moveClipToTrack, linkClips, unlinkClip, trimMode, setZoom,
   } = store;
 
   const config = SKILL_CONFIGS[skillLevel] ?? SKILL_CONFIGS.beginner;
@@ -103,6 +103,45 @@ export const TimelinePanel: React.FC = () => {
       el.scrollLeft = Math.max(0, px - w / 2);
     }
   }, [currentTime, pps]);
+
+  /* ── Ctrl+Wheel 줌 / Shift+Wheel 가로 스크롤 ── */
+  useEffect(() => {
+    const el = mainScrollRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // Ctrl(또는 Meta) + 휠 → 줌
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        const newZoom = Math.max(0.1, Math.min(10, zoom + delta));
+
+        // 줌 시 마우스 위치 기준으로 스크롤 조정
+        const rect = el.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const scrollRatio = (el.scrollLeft + mouseX) / (totalW || 1);
+
+        setZoom(newZoom);
+
+        // 다음 프레임에 스크롤 위치 보정
+        requestAnimationFrame(() => {
+          const newTotalW = Math.max(project.duration * PPS_BASE * newZoom, 800);
+          el.scrollLeft = scrollRatio * newTotalW - mouseX;
+        });
+        return;
+      }
+
+      // Shift + 휠 → 가로 스크롤
+      if (e.shiftKey) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+        return;
+      }
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [zoom, totalW, project.duration, setZoom]);
 
   const snap = useCallback((t: number): number => {
     return snapTime(t, tracks, markers, inOut, currentTime, project.duration, snapEnabled, zoom);
@@ -302,13 +341,29 @@ export const TimelinePanel: React.FC = () => {
         setClipCtxMenu(null);
         return;
       }
+      // 줌 단축키: +/= 줌인, -/_ 줌아웃, 0 줌리셋
+      if (e.key === '=' || e.key === '+') {
+        e.preventDefault();
+        setZoom(Math.min(10, zoom + 0.2));
+        return;
+      }
+      if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        setZoom(Math.max(0.1, zoom - 0.2));
+        return;
+      }
+      if (e.key === '0' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        setZoom(1);
+        return;
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [selectedClipId, selectedClipIds, currentTime, tracks, project.duration,
       canUndo, canRedo, undo, redo, pushUndo, removeClip, selectClip,
       splitClip, addMarker, togglePlay, setCurrentTime,
-      handleLinkSelected, handleUnlinkSelected]);
+      handleLinkSelected, handleUnlinkSelected, zoom, setZoom]);
 
   /* 드롭 처리 */
   const handleDrop = useCallback((e: React.DragEvent, trackId: string) => {
@@ -517,7 +572,12 @@ export const TimelinePanel: React.FC = () => {
         <div
           ref={mainScrollRef}
           onScroll={() => syncScroll('main')}
-          style={{ flex: 1, overflow: 'auto', position: 'relative' }}
+          style={{ 
+            flex: 1, 
+            overflowX: 'scroll',
+            overflowY: 'auto',
+            position: 'relative' 
+          }}
         >
           <div
             style={{
