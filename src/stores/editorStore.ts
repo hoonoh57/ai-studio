@@ -159,6 +159,11 @@ export interface EditorState {
   setActiveTab: (tab: EditorTab) => void;
   activePanel: PanelId | null;
   setActivePanel: (panel: PanelId | null) => void;
+  /* Hub 상태 */
+  activeModuleId: string | null;
+  setActiveModuleId: (id: string) => void;
+  isHubOpen: boolean;
+  setHubOpen: (open: boolean) => void;
 
   /* Undo/Redo */
   undoStack: HistoryEntry[];
@@ -822,6 +827,11 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   activePanel: null,
   setActivePanel: (panel) => set({ activePanel: panel }),
+  /* ──── Hub 상태 ──── */
+  activeModuleId: null,
+  setActiveModuleId: (id) => set({ activeModuleId: id }),
+  isHubOpen: false,
+  setHubOpen: (open) => set({ isHubOpen: open }),
 
   /* ──── Undo/Redo ──── */
   undoStack: [],
