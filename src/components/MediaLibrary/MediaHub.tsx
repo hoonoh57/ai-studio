@@ -6,6 +6,7 @@ import React, { useRef, useCallback, useState, useMemo } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import { getFilteredSortedAssets } from '@/lib/core/mediaEngine';
 import { autoTagAsset } from '@/lib/core/aiTagEngine';
+import { probeMedia } from '@/lib/core/mediaProbe';
 import { MEDIA_SKILL_CONFIGS } from '@/types/media';
 import type { Asset } from '@/types/project';
 import type {
@@ -756,16 +757,45 @@ export function MediaHub(): React.ReactElement {
     for (const file of accepted) {
       const url = URL.createObjectURL(file);
       const type = getAssetType(file);
-      const meta = await loadMediaMetadata(file, url);
+
+      // ★ probeMedia로 hasAudio/hasVideo 판별
+      let duration = 5;
+      let width: number | undefined;
+      let height: number | undefined;
+      let hasAudio = false;
+      let hasVideo = false;
+
+      if (type === 'video') {
+        const probe = await probeMedia(url);
+        duration = probe.duration || 5;
+        width = probe.width || undefined;
+        height = probe.height || undefined;
+        hasAudio = probe.hasAudio;
+        hasVideo = probe.hasVideo;
+      } else if (type === 'audio') {
+        const meta = await loadMediaMetadata(file, url);
+        duration = meta.duration;
+        hasAudio = true;
+        hasVideo = false;
+      } else {
+        // image
+        duration = 5;
+        hasVideo = true;
+        hasAudio = false;
+      }
+
       const newAsset = addAsset({
         name: file.name,
         type,
         src: url,
-        duration: meta.duration,
-        width: meta.width,
-        height: meta.height,
+        duration,
+        width,
+        height,
         fileSize: file.size,
+        hasAudio,
+        hasVideo,
       });
+
       autoTagAsset({
         name: newAsset.name,
         type: newAsset.type,

@@ -139,11 +139,24 @@ export async function analyzeVideoColorTone(
   videoUrl: string,
 ): Promise<AITag[]> {
   try {
+    // ★ 재생 중이면 분석 지연
+    const editorState = (window as any).__editorStore?.getState?.();
+    if (editorState?.isPlaying) {
+      await new Promise<void>(resolve => {
+        const check = () => {
+          const s = (window as any).__editorStore?.getState?.();
+          if (!s?.isPlaying) { resolve(); return; }
+          requestIdleCallback ? requestIdleCallback(check) : setTimeout(check, 500);
+        };
+        requestIdleCallback ? requestIdleCallback(check) : setTimeout(check, 500);
+      });
+    }
+
     const video = await loadVideoElement(videoUrl);
     const canvas = document.createElement('canvas');
     canvas.width = SAMPLE_SIZE;
     canvas.height = SAMPLE_SIZE;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });  // ★ 핵심 수정
     if (ctx === null) return [];
 
     const duration = video.duration;
@@ -157,6 +170,8 @@ export async function analyzeVideoColorTone(
 
     for (const time of sampleTimes) {
       await seekVideo(video, time);
+      // ★ 각 프레임 사이에 메인 스레드 양보
+      await new Promise(resolve => setTimeout(resolve, 0));
       ctx.drawImage(video, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
       const sample = analyzeCanvasColors(ctx, SAMPLE_SIZE, SAMPLE_SIZE);
       totalR += sample.avgR;
@@ -165,6 +180,10 @@ export async function analyzeVideoColorTone(
       totalBrightness += sample.avgBrightness;
       sampleCount++;
     }
+
+    // ★ 비디오 요소 정리
+    video.src = '';
+    video.load();
 
     if (sampleCount === 0) return [];
 
@@ -188,6 +207,7 @@ export async function analyzeVideoColorTone(
     return [];
   }
 }
+
 
 // ── 오디오 특성 분석 (RMS + 길이) ──
 export async function analyzeAudioCharacter(

@@ -60,10 +60,35 @@ function rangeParam(
 /* ════════════════════════════════════════
    Canvas 헬퍼
    ════════════════════════════════════════ */
-/** inputA를 canvas 전체에 그리기 */
+/** inputA를 canvas에 비율 유지하며 그리기 (letterbox/pillarbox) */
 function drawFull(ctx: CanvasRenderingContext2D, src: CanvasImageSource | null, w: number, h: number) {
     if (!src) return;
-    try { ctx.drawImage(src, 0, 0, w, h); } catch { /* 프레임 미준비 시 무시 */ }
+    try {
+        let sw = w, sh = h;
+        if (src instanceof HTMLVideoElement) {
+            sw = src.videoWidth || w;
+            sh = src.videoHeight || h;
+        } else if (src instanceof HTMLImageElement) {
+            sw = src.naturalWidth || w;
+            sh = src.naturalHeight || h;
+        }
+
+        const srcAspect = sw / sh;
+        const dstAspect = w / h;
+
+        let dx: number, dy: number, dw: number, dh: number;
+        if (srcAspect > dstAspect) {
+            // 소스가 더 넓음 → 위아래 레터박스
+            dw = w; dh = w / srcAspect;
+            dx = 0; dy = (h - dh) / 2;
+        } else {
+            // 소스가 더 좁음 → 좌우 필러박스
+            dh = h; dw = h * srcAspect;
+            dx = (w - dw) / 2; dy = 0;
+        }
+
+        ctx.drawImage(src, dx, dy, dw, dh);
+    } catch { /* 프레임 미준비 시 무시 */ }
 }
 
 /* ════════════════════════════════════════
@@ -516,7 +541,7 @@ effectRegistry.register({
    export
    ════════════════════════════════════════ */
 console.log('[effectRegistry] registered effects:',
-  Array.from(registry.keys())
+    Array.from(registry.keys())
 );
 
 export { effectRegistry as default };

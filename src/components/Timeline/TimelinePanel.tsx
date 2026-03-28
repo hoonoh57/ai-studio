@@ -190,6 +190,7 @@ export const TimelinePanel: React.FC = () => {
   const unlinkClip = useEditorStore(s => s.unlinkClip);
   const trimMode = useEditorStore(s => s.trimMode);
   const setZoom = useEditorStore(s => s.setZoom);
+  const addClipFromAsset = useEditorStore(s => s.addClipFromAsset);
 
   const config = SKILL_CONFIGS[skillLevel] ?? SKILL_CONFIGS.beginner;
 
@@ -512,7 +513,7 @@ export const TimelinePanel: React.FC = () => {
     return () => window.removeEventListener('keydown', handler);
   }, [handleLinkSelected, handleUnlinkSelected]);
 
-  /* 드롭 처리 */
+  /* 드롭 처리 — ★ addClipFromAsset 사용 */
   const handleDrop = useCallback((e: React.DragEvent, trackId: string) => {
     e.preventDefault();
     const assetId = e.dataTransfer.getData('assetId');
@@ -543,29 +544,36 @@ export const TimelinePanel: React.FC = () => {
       }
     }
 
+    // ★ 드롭 위치 계산
     const rect = mainScrollRef.current?.getBoundingClientRect();
     const scrollLeft = mainScrollRef.current?.scrollLeft ?? 0;
     const x = rect ? e.clientX - rect.left + scrollLeft : 0;
     const startTime = snap(Math.max(0, x / pps));
-    const duration = asset.type === 'image' ? 5 : (asset.duration || 5);
 
-    pushUndo('클립 추가');
-    addClip(targetTrackId, {
-      id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
-      assetId: asset.id,
-      startTime,
-      duration,
-      inPoint: 0,
-      outPoint: duration,
-      transform: { x: 0, y: 0, scale: 1, rotation: 0 },
-      filters: [],
-      blendMode: 'normal',
-      opacity: 1,
-      volume: asset.type === 'audio' ? 1 : undefined,
-      speed: 1,
-    });
+    // ★ 비디오 에셋이고 hasAudio가 있으면 addClipFromAsset 사용 (V+A 쌍 생성)
+    if (asset.type === 'video' && asset.hasAudio) {
+      addClipFromAsset(assetId, targetTrackId, startTime);
+    } else {
+      // 오디오 전용, 이미지, 또는 hasAudio가 없는 비디오
+      const duration = asset.type === 'image' ? 5 : (asset.duration || 5);
+      pushUndo('클립 추가');
+      addClip(targetTrackId, {
+        id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+        assetId: asset.id,
+        startTime,
+        duration,
+        inPoint: 0,
+        outPoint: duration,
+        transform: { x: 0, y: 0, scale: 1, rotation: 0 },
+        filters: [],
+        blendMode: 'normal',
+        opacity: 1,
+        volume: asset.type === 'audio' ? 1 : undefined,
+        speed: 1,
+      });
+    }
     recalcDuration();
-  }, [project.assets, tracks, snap, pps, pushUndo, addClip, addTrackChecked, recalcDuration]);
+  }, [project.assets, tracks, snap, pps, pushUndo, addClip, addClipFromAsset, addTrackChecked, recalcDuration]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
