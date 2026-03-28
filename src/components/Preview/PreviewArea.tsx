@@ -135,6 +135,7 @@ export function PreviewArea() {
     for (const track of state.project.tracks) {
       if (!track.clips || track.type === 'audio') continue; // 오디오 트랙 제외
       for (const clip of track.clips) {
+        if (clip.disabled) continue; // ★ B2-5
         if (time >= clip.startTime && time < clip.startTime + clip.duration) return clip;
       }
     }

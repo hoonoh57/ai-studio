@@ -360,11 +360,30 @@ export const TimelinePanel: React.FC = () => {
     e.stopPropagation();
     const found = findClipAndTrack(clipId);
     if (!found) return;
+
+    // ★ B2-4: Alt+드래그 = 복제 후 이동
+    if (e.altKey && type === 'move') {
+      const store = useEditorStore.getState();
+      store.duplicateClip(clipId, found.clip.startTime);
+      const newState = useEditorStore.getState();
+      const newClipId = newState.selectedClipId;
+      if (newClipId) {
+        dragRef.current = {
+          type: 'move', clipId: newClipId, trackId,
+          startX: e.clientX, startY: e.clientY,
+          startTime: found.clip.startTime,
+          originalStartTime: found.clip.startTime,
+          originalDuration: found.clip.duration,
+        };
+        handleClipSelect(newClipId, false);
+        return;
+      }
+    }
+
     pushUndo('클립 편집');
     dragRef.current = {
       type, clipId, trackId,
-      startX: e.clientX,
-      startY: e.clientY,
+      startX: e.clientX, startY: e.clientY,
       startTime: found.clip.startTime,
       originalStartTime: found.clip.startTime,
       originalDuration: found.clip.duration,
@@ -384,14 +403,37 @@ export const TimelinePanel: React.FC = () => {
       if (d.type === 'move') {
         updateClip(d.clipId, { startTime: snap(Math.max(0, d.startTime + dt)) });
       } else if (d.type === 'trim-left') {
-        /* T-3.4: 트림 모드별 동작 */
         if (trimMode === 'slip') {
           const sourceShift = dt;
           updateClip(d.clipId, {
             inPoint: Math.max(0, d.startTime + sourceShift),
             outPoint: Math.max(0.1, d.startTime + d.originalDuration + sourceShift),
           });
+        } else if (trimMode === 'slide') {
+          updateClip(d.clipId, {
+            startTime: snap(Math.max(0, d.startTime + dt)),
+          });
+        } else if (trimMode === 'roll') {
+          const newStart = snap(Math.max(0, d.startTime + dt));
+          const shrink = newStart - d.originalStartTime;
+          updateClip(d.clipId, {
+            startTime: newStart,
+            duration: Math.max(0.1, d.originalDuration - shrink),
+          });
+          const state = useEditorStore.getState();
+          for (const t of state.project.tracks) {
+            const prevClip = t.clips.find((c) => {
+              const cEnd = c.startTime + c.duration;
+              return Math.abs(cEnd - d.originalStartTime) < 0.05 && c.id !== d.clipId;
+            });
+            if (prevClip) {
+              const newDur = newStart - prevClip.startTime;
+              if (newDur > 0.05) updateClip(prevClip.id, { duration: newDur });
+              break;
+            }
+          }
         } else {
+          // normal & ripple
           const newStart = snap(Math.max(0, d.startTime + dt));
           const shrink = newStart - d.originalStartTime;
           updateClip(d.clipId, {
@@ -400,9 +442,32 @@ export const TimelinePanel: React.FC = () => {
           });
         }
       } else if (d.type === 'trim-right') {
-        updateClip(d.clipId, {
-          duration: snap(Math.max(0.1, d.originalDuration + dt)),
-        });
+        if (trimMode === 'roll') {
+          const newDur = snap(Math.max(0.1, d.originalDuration + dt));
+          const newEnd = d.originalStartTime + newDur;
+          updateClip(d.clipId, { duration: newDur });
+          const state = useEditorStore.getState();
+          for (const t of state.project.tracks) {
+            const nextClip = t.clips.find(
+              (c) => Math.abs(c.startTime - (d.originalStartTime + d.originalDuration)) < 0.05
+              && c.id !== d.clipId,
+            );
+            if (nextClip) {
+              const diff = newEnd - nextClip.startTime;
+              if (nextClip.duration - diff > 0.05) {
+                updateClip(nextClip.id, {
+                  startTime: newEnd,
+                  duration: nextClip.duration - diff,
+                });
+              }
+              break;
+            }
+          }
+        } else {
+          updateClip(d.clipId, {
+            duration: snap(Math.max(0.1, d.originalDuration + dt)),
+          });
+        }
       }
     };
 
@@ -438,7 +503,7 @@ export const TimelinePanel: React.FC = () => {
         selectedClipId, currentTime, project,
         canUndo, canRedo, undo, redo, pushUndo,
         removeClip, selectClip, splitClip, addMarker,
-        togglePlay, setCurrentTime, zoom, setZoom
+        togglePlay, setCurrentTime, zoom, setZoom,
       } = state;
 
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
@@ -457,19 +522,39 @@ export const TimelinePanel: React.FC = () => {
         e.preventDefault(); openProjectFile(); return;
       }
 
+      // ★ B2-3: Ctrl+C 복사
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        e.preventDefault(); state.copyClip(); return;
+      }
+      // ★ B2-3: Ctrl+V 붙여넣기
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+        e.preventDefault(); state.pasteClip(); return;
+      }
+      // ★ B2-4: Ctrl+D 복제
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        if (selectedClipId) state.duplicateClip(selectedClipId);
+        return;
+      }
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
         // ★ 키프레임 다이아몬드 호버 중이면 클립 삭제 차단
         const { x, y } = mousePosRef.current;
         const els = document.elementsFromPoint(x, y);
         const isKfArea = els.some(
-          el => el instanceof HTMLElement && el.closest('[data-keyframe-area="true"]')
+          el => el instanceof HTMLElement && el.closest('[data-keyframe-area="true"]'),
         );
         if (isKfArea) { e.preventDefault(); return; }
 
         if (selectedClipId && !isClipOnLockedTrack(selectedClipId, project.tracks)) {
           e.preventDefault();
-          pushUndo('클립 삭제');
-          removeClip(selectedClipId);
+          // ★ B2-1: Shift+Delete = 리플 삭제
+          if (e.shiftKey) {
+            state.rippleDelete(selectedClipId);
+          } else {
+            pushUndo('클립 삭제');
+            removeClip(selectedClipId);
+          }
           selectClip(null);
           setSelectedClipIds(new Set());
         }
@@ -478,6 +563,13 @@ export const TimelinePanel: React.FC = () => {
       if (e.key.toLowerCase() === 'c' && !e.ctrlKey && !e.metaKey) {
         if (selectedClipId && !isClipOnLockedTrack(selectedClipId, project.tracks)) {
           splitClip(selectedClipId, currentTime);
+        }
+        return;
+      }
+      // ★ B2-5: D키 = 비활성화 토글
+      if (e.key.toLowerCase() === 'd' && !e.ctrlKey && !e.metaKey) {
+        if (selectedClipId && !isClipOnLockedTrack(selectedClipId, project.tracks)) {
+          state.toggleClipDisabled(selectedClipId);
         }
         return;
       }
@@ -492,6 +584,31 @@ export const TimelinePanel: React.FC = () => {
         e.preventDefault(); handleUnlinkSelected(); return;
       }
       if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
+
+      // ★ B2-8: J/K/L 셔틀
+      if (e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        const cur = state.shuttleSpeed;
+        if (cur > 0) state.setShuttleSpeed(0);
+        else if (cur === 0) state.setShuttleSpeed(-1);
+        else state.setShuttleSpeed(Math.max(-4, cur * 2));
+        return;
+      }
+      if (e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        state.setShuttleSpeed(0);
+        if (state.isPlaying) togglePlay();
+        return;
+      }
+      if (e.key.toLowerCase() === 'l' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        const cur = state.shuttleSpeed;
+        if (cur < 0) state.setShuttleSpeed(0);
+        else if (cur === 0) state.setShuttleSpeed(1);
+        else state.setShuttleSpeed(Math.min(4, cur * 2));
+        return;
+      }
+
       if (e.key === 'ArrowLeft') { setCurrentTime(Math.max(0, currentTime - 1 / 30)); return; }
       if (e.key === 'ArrowRight') { setCurrentTime(currentTime + 1 / 30); return; }
       if (e.key === 'Home') { setCurrentTime(0); return; }
@@ -512,6 +629,41 @@ export const TimelinePanel: React.FC = () => {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [handleLinkSelected, handleUnlinkSelected]);
+
+  /* ★ B2-8: J/K/L 셔틀 재생 루프 */
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const startShuttle = () => {
+      if (intervalId) clearInterval(intervalId);
+      intervalId = setInterval(() => {
+        const state = useEditorStore.getState();
+        if (state.shuttleSpeed === 0) {
+          if (intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
+          return;
+        }
+        const newTime = state.currentTime + state.shuttleSpeed / 30;
+        state.setCurrentTime(Math.max(0, Math.min(state.project.duration, newTime)));
+      }, 1000 / 30);
+    };
+
+    const checkInterval = setInterval(() => {
+      const speed = useEditorStore.getState().shuttleSpeed;
+      if (speed !== 0 && !intervalId) startShuttle();
+      if (speed === 0 && intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    }, 100);
+
+    return () => {
+      clearInterval(checkInterval);
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, []);
 
   /* 드롭 처리 — ★ addClipFromAsset 사용 */
   const handleDrop = useCallback((e: React.DragEvent, trackId: string) => {
@@ -670,6 +822,18 @@ export const TimelinePanel: React.FC = () => {
             title="링크 해제 (Ctrl+Shift+L)"
           >
             🔓 언링크
+          </button>
+          
+          {/* ★ B2-2: 갭 닫기 버튼 */}
+          <button
+            style={{
+              padding: '2px 10px', fontSize: 11, border: 'none', borderRadius: 4,
+              cursor: 'pointer', background: 'var(--bg-secondary, #1e1e2e)', color: '#aaa',
+            }}
+            onClick={() => useEditorStore.getState().closeAllGaps()}
+            title="모든 트랙의 갭 닫기"
+          >
+            ⊟ 갭 닫기
           </button>
         </div>
       )}

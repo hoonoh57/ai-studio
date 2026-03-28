@@ -63,6 +63,8 @@ export interface Clip {
   groupId?: string;
   /* Phase T-3: 역재생 */
   reverse?: boolean;
+  /** ★ B2-5: 클립 비활성화 (프리뷰/내보내기에서 스킵) */
+  disabled?: boolean;
   
   /* Step 3: 키프레임 애니메이션 */
   keyframeTracks?: KeyframeTrack[];

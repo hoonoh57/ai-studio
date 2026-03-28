@@ -95,6 +95,19 @@ export interface EditorState {
   /* ★ Phase B1: 오디오 분리 (초급 UI에서 사용) */
   separateAudio: (clipId: string) => void;
 
+  /* ★ Phase B2: 편집 기본 동작 */
+  rippleDelete: (clipId: string) => void;
+  closeGap: (trackId: string) => void;
+  closeAllGaps: () => void;
+  clipboard: Clip | null;
+  copyClip: () => void;
+  pasteClip: () => void;
+  duplicateClip: (clipId: string, newStartTime?: number) => void;
+  toggleClipDisabled: (clipId: string) => void;
+  freezeFrame: (clipId: string, time: number, duration?: number) => void;
+  shuttleSpeed: number;
+  setShuttleSpeed: (speed: number) => void;
+
   /* Phase T-3: 클립 고급 편집 */
   setClipSpeed: (clipId: string, speed: number, reverse?: boolean) => void;
   setClipBlendMode: (clipId: string, mode: BlendMode) => void;
@@ -561,6 +574,267 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     // 링크 해제
     get().unlinkClip(clipId);
   },
+
+  /* ═══ Phase B2: 편집 기본 동작 ═══ */
+
+  /* B2-1: 리플 삭제 */
+  rippleDelete: (clipId) => {
+    const s = get();
+    let targetTrack: Track | undefined;
+    let targetClip: Clip | undefined;
+    for (const t of s.project.tracks) {
+      const c = t.clips.find(cl => cl.id === clipId);
+      if (c) {
+        targetTrack = t;
+        targetClip = c;
+        break;
+      }
+    }
+    if (!targetTrack || !targetClip || targetTrack.locked) return;
+
+    const clipEnd = targetClip.startTime + targetClip.duration;
+    const gap = targetClip.duration;
+
+    // 링크된 클립 정보
+    let linkedId: string | undefined;
+    let linkedTrackId: string | undefined;
+    let linkedClipEnd = 0;
+    let linkedGap = 0;
+    if (targetClip.linkedClipId) {
+      linkedId = targetClip.linkedClipId;
+      for (const t of s.project.tracks) {
+        const lc = t.clips.find(c => c.id === linkedId);
+        if (lc) {
+          linkedTrackId = t.id;
+          linkedClipEnd = lc.startTime + lc.duration;
+          linkedGap = lc.duration;
+          break;
+        }
+      }
+    }
+
+    s.pushUndo('리플 삭제');
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t => {
+          if (t.id === targetTrack!.id) {
+            return {
+              ...t,
+              clips: t.clips
+                .filter(c => c.id !== clipId)
+                .map(c => (c.startTime >= clipEnd ? { ...c, startTime: c.startTime - gap } : c)),
+            };
+          }
+          if (linkedId && linkedTrackId && t.id === linkedTrackId) {
+            return {
+              ...t,
+              clips: t.clips
+                .filter(c => c.id !== linkedId)
+                .map(c => (c.startTime >= linkedClipEnd ? { ...c, startTime: c.startTime - linkedGap } : c)),
+            };
+          }
+          return t;
+        }),
+      },
+    }));
+    get().selectClip(null);
+    get().recalcDuration();
+  },
+
+  /* B2-2: 갭 닫기 */
+  closeGap: (trackId) => {
+    const s = get();
+    const track = s.project.tracks.find(t => t.id === trackId);
+    if (!track || track.locked || track.clips.length === 0) return;
+
+    const sorted = [...track.clips].sort((a, b) => a.startTime - b.startTime);
+    const newClips: Clip[] = [];
+    let cursor = 0;
+    for (const clip of sorted) {
+      newClips.push({ ...clip, startTime: cursor });
+      cursor += clip.duration;
+    }
+
+    // 변화가 없으면 스킵
+    const changed = sorted.some((c, i) => c.startTime !== newClips[i].startTime);
+    if (!changed) return;
+
+    s.pushUndo('갭 닫기');
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t =>
+          (t.id === trackId ? { ...t, clips: newClips } : t)),
+      },
+    }));
+    get().recalcDuration();
+  },
+
+  closeAllGaps: () => {
+    const s = get();
+    s.pushUndo('모든 갭 닫기');
+    for (const track of s.project.tracks) {
+      if (!track.locked && track.clips.length > 0) {
+        get().closeGap(track.id);
+      }
+    }
+  },
+
+  /* B2-3: 클립보드 */
+  clipboard: null,
+
+  copyClip: () => {
+    const s = get();
+    if (!s.selectedClipId) return;
+    for (const t of s.project.tracks) {
+      const c = t.clips.find(cl => cl.id === s.selectedClipId);
+      if (c) {
+        set({ clipboard: JSON.parse(JSON.stringify(c)) });
+        return;
+      }
+    }
+  },
+
+  pasteClip: () => {
+    const s = get();
+    if (!s.clipboard) return;
+
+    let targetTrackId: string | undefined;
+    // 같은 에셋 타입 트랙 찾기
+    for (const t of s.project.tracks) {
+      if (!t.locked && t.clips.some(c => c.assetId === s.clipboard!.assetId)) {
+        targetTrackId = t.id;
+        break;
+      }
+    }
+    if (!targetTrackId) {
+      const vt = s.project.tracks.find(t => t.type === 'video' && !t.locked);
+      targetTrackId = vt?.id;
+    }
+    if (!targetTrackId) {
+      const at = s.project.tracks.find(t => !t.locked);
+      targetTrackId = at?.id;
+    }
+    if (!targetTrackId) return;
+
+    s.pushUndo('클립 붙여넣기');
+    const newClip: Clip = {
+      ...JSON.parse(JSON.stringify(s.clipboard)),
+      id: uid('clip'),
+      startTime: s.currentTime,
+      linkedClipId: undefined,
+    };
+
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t =>
+          (t.id === targetTrackId ? { ...t, clips: [...t.clips, newClip] } : t)),
+      },
+    }));
+    get().selectClip(newClip.id);
+    get().recalcDuration();
+  },
+
+  /* B2-4: 클립 복제 */
+  duplicateClip: (clipId, newStartTime) => {
+    const s = get();
+    let targetTrack: Track | undefined;
+    let targetClip: Clip | undefined;
+    for (const t of s.project.tracks) {
+      const c = t.clips.find(cl => cl.id === clipId);
+      if (c) {
+        targetTrack = t;
+        targetClip = c;
+        break;
+      }
+    }
+    if (!targetTrack || !targetClip) return;
+
+    s.pushUndo('클립 복제');
+    const newClip: Clip = {
+      ...JSON.parse(JSON.stringify(targetClip)),
+      id: uid('clip'),
+      startTime: newStartTime ?? targetClip.startTime + targetClip.duration,
+      linkedClipId: undefined,
+    };
+
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t =>
+          (t.id === targetTrack!.id ? { ...t, clips: [...t.clips, newClip] } : t)),
+      },
+    }));
+    get().selectClip(newClip.id);
+    get().recalcDuration();
+  },
+
+  /* B2-5: 클립 비활성화 토글 */
+  toggleClipDisabled: (clipId) => {
+    const s = get();
+    s.pushUndo('클립 비활성화 토글');
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c => (c.id === clipId ? { ...c, disabled: !c.disabled } : c)),
+        })),
+      },
+    }));
+  },
+
+  /* B2-6: 프리즈 프레임 */
+  freezeFrame: (clipId, time, duration = 5) => {
+    const s = get();
+    let targetTrack: Track | undefined;
+    let targetClip: Clip | undefined;
+    for (const t of s.project.tracks) {
+      const c = t.clips.find(cl => cl.id === clipId);
+      if (c) {
+        targetTrack = t;
+        targetClip = c;
+        break;
+      }
+    }
+    if (!targetTrack || !targetClip) return;
+
+    const relTime = time - targetClip.startTime;
+    if (relTime < 0 || relTime >= targetClip.duration) return;
+
+    const freezeInPoint = targetClip.inPoint + relTime;
+
+    s.pushUndo('프리즈 프레임');
+    const freezeClip: Clip = {
+      id: uid('clip'),
+      assetId: targetClip.assetId,
+      startTime: targetClip.startTime + targetClip.duration,
+      duration,
+      inPoint: freezeInPoint,
+      outPoint: freezeInPoint + 0.001,
+      transform: { ...targetClip.transform },
+      filters: [],
+      blendMode: 'normal',
+      opacity: 1,
+      speed: 0.001,
+      disabled: false,
+    };
+
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t =>
+          (t.id === targetTrack!.id ? { ...t, clips: [...t.clips, freezeClip] } : t)),
+      },
+    }));
+    get().recalcDuration();
+  },
+
+  /* B2-8: 셔틀 속도 */
+  shuttleSpeed: 0,
+  setShuttleSpeed: (speed) => set({ shuttleSpeed: speed }),
 
   updateClip: (clipId, patch) => set((s) => {
     // ★ 링크된 클립에 전파할 속성 필터

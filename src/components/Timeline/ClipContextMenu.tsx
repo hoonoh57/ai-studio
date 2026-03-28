@@ -54,7 +54,8 @@ export const ClipContextMenu: React.FC<ClipContextMenuProps> = ({
   const {
     skillLevel, splitClip, removeClip, selectClip, currentTime,
     pushUndo, setClipSpeed, setClipBlendMode, unlinkClip,
-    ungroupClips,
+    ungroupClips, rippleDelete, copyClip, duplicateClip, toggleClipDisabled,
+    freezeFrame,
   } = store;
 
   const config = SKILL_CONFIGS[skillLevel] ?? SKILL_CONFIGS.beginner;
@@ -75,6 +76,32 @@ export const ClipContextMenu: React.FC<ClipContextMenuProps> = ({
 
   const handleSplit = () => {
     splitClip(clip.id, currentTime);
+    onClose();
+  };
+
+  const handleRippleDelete = () => {
+    rippleDelete(clip.id);
+    onClose();
+  };
+
+  const handleCopy = () => {
+    selectClip(clip.id);
+    copyClip();
+    onClose();
+  };
+
+  const handleDuplicate = () => {
+    duplicateClip(clip.id);
+    onClose();
+  };
+
+  const handleToggleDisabled = () => {
+    toggleClipDisabled(clip.id);
+    onClose();
+  };
+
+  const handleFreezeFrame = () => {
+    freezeFrame(clip.id, currentTime);
     onClose();
   };
 
@@ -121,6 +148,27 @@ export const ClipContextMenu: React.FC<ClipContextMenuProps> = ({
       <button style={itemStyle()} onClick={handleSplit}>
         ✂️ 분할 (현재 시간)
       </button>
+
+      <button style={itemStyle()} onClick={handleCopy}>
+        📋 복사 (Ctrl+C)
+      </button>
+      <button style={itemStyle()} onClick={handleDuplicate}>
+        📑 복제 (Ctrl+D)
+      </button>
+
+      <div style={divider} />
+
+      <button style={itemStyle()} onClick={handleRippleDelete}>
+        ⏪ 리플 삭제 (Shift+Del)
+      </button>
+      <button style={itemStyle()} onClick={handleToggleDisabled}>
+        {clip.disabled ? '👁️ 활성화 (D)' : '🚫 비활성화 (D)'}
+      </button>
+      <button style={itemStyle()} onClick={handleFreezeFrame}>
+        ❄️ 프리즈 프레임
+      </button>
+
+      <div style={divider} />
 
       {/* 속도 */}
       {config.showSpeedControl && (

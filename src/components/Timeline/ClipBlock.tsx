@@ -72,6 +72,7 @@ export function ClipBlock({
   const waveformData = waveformCache.get(clip.assetId) ?? null;
 
   const isPrimary = clip.id === selectedClipId;
+  const isDisabled = clip.disabled === true;
   const bgColor = isPrimary ? 'var(--accent-hover)' : (isSelected ? 'var(--accent, #6c5ce7)' : track.color);
   const border = isPrimary ? SELECTED_BORDER : (isSelected ? MULTI_SELECTED_BORDER : NORMAL_BORDER);
 
@@ -103,6 +104,7 @@ export function ClipBlock({
         overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
         userSelect: 'none', background: bgColor, border,
         boxSizing: 'border-box', zIndex: isSelected ? 20 : 1,
+        opacity: isDisabled ? 0.35 : 1,
       }}
       onClick={(e) => { e.stopPropagation(); onSelect(e); }}
       onMouseDown={onMoveStart}
@@ -113,6 +115,23 @@ export function ClipBlock({
           position: 'absolute', top: 2, left: 4,
           fontSize: 10, opacity: 0.6, pointerEvents: 'none', zIndex: 3,
         }}>🔗</div>
+      )}
+
+      {/* ★ B2-5: 클립 비활성화 오버레이 */}
+      {isDisabled && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 25, pointerEvents: 'none',
+          background: 'repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(255,0,0,0.15) 4px, rgba(255,0,0,0.15) 8px)',
+          borderRadius: CLIP_BORDER_RADIUS,
+        }}>
+          <span style={{
+            position: 'absolute', top: '50%', left: '50%',
+            transform: 'translate(-50%, -50%)',
+            fontSize: 10, color: '#ff6b6b', fontWeight: 700,
+          }}>
+            DISABLED
+          </span>
+        </div>
       )}
 
       {/* Visualizations */}
