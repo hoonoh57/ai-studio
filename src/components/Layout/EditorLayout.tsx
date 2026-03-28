@@ -2,16 +2,12 @@
 import React from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import { SKILL_CONFIGS } from '@/types/project';
-import type { PanelId } from '@/types/project';
 import { TopBar } from './TopBar';
-import { IconBar } from './IconBar';
-import { MediaHub } from '@/components/MediaLibrary/MediaHub';
+import { IconBarHub } from './IconBarHub';
+import { LeftPanelHub } from './LeftPanelHub';
 import { PreviewArea } from '@/components/Preview/PreviewArea';
 import { TimelinePanel } from '@/components/Timeline/TimelinePanel';
 import { PropertiesPanel } from '@/components/Properties/PropertiesPanel';
-import { AudioMixerPanel } from '@/components/AudioMixer/AudioMixerPanel';
-import { EffectsPanel } from '@/components/Effects/EffectsPanel';
-import { TransitionPanel } from '@/components/Effects/TransitionPanel';
 import { useAssetVisualization } from '@/hooks/useAssetVisualization';
 import css from './EditorLayout.module.css';
 
@@ -53,26 +49,10 @@ function BeginnerView(): React.ReactElement {
   );
 }
 
-function LeftPanel({ panelId }: { panelId: PanelId | null }): React.ReactElement {
-  switch (panelId) {
-    case 'audio':
-    case 'audio-mixer':
-      return <AudioMixerPanel />;
-    case 'effects':
-      return <EffectsPanel />;
-    case 'transition':
-      return <TransitionPanel />;
-    case 'media':
-    default:
-      return <MediaHub />;
-  }
-}
-
 export function EditorLayout(): React.ReactElement {
   useAssetVisualization();
   const skillLevel = useEditorStore(st => st.skillLevel);
   const activeTab = useEditorStore(st => st.activeTab);
-  const activePanel = useEditorStore(st => st.activePanel);
   const config = SKILL_CONFIGS[skillLevel];
 
   if (activeTab === 'ai-creator') {
@@ -88,9 +68,9 @@ export function EditorLayout(): React.ReactElement {
     <div className={css.app}>
       <TopBar />
       <div className={css.main}>
-        {config.showIconBar && <IconBar />}
+        {config.showIconBar && <IconBarHub />}
         <div className={css.mediaWrap}>
-          <LeftPanel panelId={activePanel} />
+          <LeftPanelHub />
         </div>
         <div className={css.centerCol}>
           <div className={css.previewArea}><PreviewArea /></div>
