@@ -1,5 +1,5 @@
 /* ─── src/modules/builtinModules.ts ─── */
-/* 아키텍처 헌법 축3: 기존 7개 패널을 HubModule로 래핑 → 레지스트리 등록 */
+/* 아키텍처 헌법 축3: 기존 패널 + 모션 프리셋을 HubModule로 래핑 → 레지스트리 등록 */
 
 import React from 'react';
 import type { HubModule, HubRenderProps } from '@/types/hub';
@@ -28,7 +28,7 @@ function wrapComponent<T extends Record<string, any>>(
 }
 
 /* ═══════════════════════════════════════════
-   빌트인 모듈 정의 (7개)
+   빌트인 모듈 정의 (8개)
    ═══════════════════════════════════════════ */
 
 const BUILTIN_MODULES: HubModule[] = [
@@ -89,6 +89,20 @@ const BUILTIN_MODULES: HubModule[] = [
         version: 1,
     },
     {
+        id: 'builtin.preset',
+        name: '모션 프리셋',
+        icon: '🎬',
+        category: 'motion',
+        minSkillLevel: 'intermediate',
+        render: wrapComponent(() => import('@/components/Presets/PresetPanel'), 'PresetPanel'),
+        searchKeywords: ['프리셋', 'preset', '모션', 'motion', '애니메이션', '키프레임', 'entrance', 'exit'],
+        description: '34개 빌트인 모션 프리셋 — 등장, 퇴장, 강조, 시네마틱 효과 원클릭 적용',
+        defaultFavorite: true,
+        defaultOrder: 4,
+        builtin: true,
+        version: 1,
+    },
+    {
         id: 'builtin.ai',
         name: 'AI 도구',
         icon: '🤖',
@@ -98,7 +112,7 @@ const BUILTIN_MODULES: HubModule[] = [
         searchKeywords: ['ai', '인공지능', '자동', 'auto', '추천', 'director'],
         description: 'AI 기반 자동 편집, 추천, 태그 분석',
         defaultFavorite: true,
-        defaultOrder: 4,
+        defaultOrder: 5,
         builtin: true,
         version: 1,
     },
@@ -112,7 +126,7 @@ const BUILTIN_MODULES: HubModule[] = [
         searchKeywords: ['스티커', 'sticker', '이모지', 'emoji', '오버레이', 'overlay'],
         description: '스티커, 이모지, 장식 오버레이 추가',
         defaultFavorite: true,
-        defaultOrder: 5,
+        defaultOrder: 6,
         builtin: true,
         version: 1,
     },
@@ -126,7 +140,7 @@ const BUILTIN_MODULES: HubModule[] = [
         searchKeywords: ['트랜지션', 'transition', '전환', 'dissolve', 'fade', 'wipe'],
         description: '클립 간 전환 효과 적용',
         defaultFavorite: true,
-        defaultOrder: 6,
+        defaultOrder: 7,
         builtin: true,
         version: 1,
     },
