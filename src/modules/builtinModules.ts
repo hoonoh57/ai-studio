@@ -144,6 +144,21 @@ const BUILTIN_MODULES: HubModule[] = [
         builtin: true,
         version: 1,
     },
+    {
+        id: 'builtin.export',
+        name: '내보내기',
+        icon: '📤',
+        category: 'system',
+        minSkillLevel: 'beginner',
+        render: wrapComponent(() => import('@/components/Panels/ExportPanel'), 'ExportPanel'),
+        searchKeywords: ['내보내기', 'export', '렌더', 'render', 'mp4', '인코딩', 'encoding',
+                         'youtube', 'tiktok', 'instagram', 'reels', '다운로드'],
+        description: 'H.264 MP4 내보내기 · YouTube/Instagram/TikTok 프리셋 · 진행률 표시',
+        defaultFavorite: true,
+        defaultOrder: 8,
+        builtin: true,
+        version: 1,
+    },
 ];
 
 /* ═══════════════════════════════════════════
