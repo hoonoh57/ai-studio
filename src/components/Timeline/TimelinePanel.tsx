@@ -36,6 +36,124 @@ function isClipOnLockedTrack(clipId: string, tracks: Track[]): boolean {
   return false;
 }
 
+/* ── 커스텀 수평 스크롤바 컴포넌트 ── */
+const SCROLLBAR_H = 14;
+
+const TimelineHScrollBar: React.FC<{
+  scrollRef: React.RefObject<HTMLDivElement>;
+  totalW: number;
+}> = ({ scrollRef, totalW }) => {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [thumbLeft, setThumbLeft] = useState(0);
+  const [thumbWidth, setThumbWidth] = useState(100);
+  const dragRef = useRef<{ startX: number; startScrollLeft: number } | null>(null);
+
+  // 스크롤 동기화
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const sync = () => {
+      const viewW = el.clientWidth;
+      const scrollW = el.scrollWidth;
+      if (scrollW <= viewW) {
+        setThumbWidth(100); // %
+        setThumbLeft(0);
+        return;
+      }
+      const ratio = viewW / scrollW;
+      const trackEl = trackRef.current;
+      const trackW = trackEl ? trackEl.clientWidth : viewW;
+      const currentThumbW = Math.max(30, ratio * trackW);
+      setThumbWidth(currentThumbW);
+      const scrollRatio = el.scrollLeft / (scrollW - viewW);
+      setThumbLeft(scrollRatio * (trackW - currentThumbW));
+    };
+    sync();
+    el.addEventListener('scroll', sync);
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', sync);
+      ro.disconnect();
+    };
+  }, [scrollRef, totalW]);
+
+  // 드래그
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const d = dragRef.current;
+      const el = scrollRef.current;
+      const trackEl = trackRef.current;
+      if (!d || !el || !trackEl) return;
+      const dx = e.clientX - d.startX;
+      const trackW = trackEl.clientWidth;
+      const scrollW = el.scrollWidth;
+      const viewW = el.clientWidth;
+      const scrollRange = scrollW - viewW;
+      const trackRange = trackW - thumbWidth;
+      if (trackRange <= 0) return;
+      el.scrollLeft = d.startScrollLeft + (dx / trackRange) * scrollRange;
+    };
+    const onUp = () => { dragRef.current = null; };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [scrollRef, thumbWidth]);
+
+  const handleThumbDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const el = scrollRef.current;
+    if (!el) return;
+    dragRef.current = { startX: e.clientX, startScrollLeft: el.scrollLeft };
+  };
+
+  // 트랙 클릭 → 해당 위치로 점프
+  const handleTrackClick = (e: React.MouseEvent) => {
+    const el = scrollRef.current;
+    const trackEl = trackRef.current;
+    if (!el || !trackEl) return;
+    const rect = trackEl.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const ratio = clickX / rect.width;
+    el.scrollLeft = ratio * (el.scrollWidth - el.clientWidth);
+  };
+
+  return (
+    <div
+      ref={trackRef}
+      onClick={handleTrackClick}
+      style={{
+        height: SCROLLBAR_H,
+        background: 'var(--bg-tertiary, #1a1a2e)',
+        borderTop: '1px solid var(--border-secondary, #333)',
+        position: 'relative',
+        cursor: 'pointer',
+        flexShrink: 0,
+        marginLeft: TRACK_LABEL_W,
+      }}
+    >
+      <div
+        onMouseDown={handleThumbDown}
+        style={{
+          position: 'absolute',
+          top: 2,
+          left: thumbLeft,
+          width: thumbWidth,
+          height: SCROLLBAR_H - 4,
+          background: 'var(--accent, #6c5ce7)',
+          borderRadius: 4,
+          cursor: 'grab',
+          opacity: 0.7,
+          transition: dragRef.current ? 'none' : 'left 0.05s',
+        }}
+      />
+    </div>
+  );
+};
+
 export const TimelinePanel: React.FC = () => {
   const store = useEditorStore();
   const {
@@ -91,39 +209,24 @@ export const TimelinePanel: React.FC = () => {
     requestAnimationFrame(() => { syncingRef.current = false; });
   }, []);
 
-  /* ── I-4 FIX: 줌 비례 동적 마진 ── */
-  useEffect(() => {
-    const el = mainScrollRef.current;
-    if (!el) return;
-    const px = currentTime * pps;
-    const scrollLeft = el.scrollLeft;
-    const w = el.clientWidth;
-    const margin = Math.max(40, Math.min(w * 0.15, 200));
-    if (px < scrollLeft + margin || px > scrollLeft + w - margin) {
-      el.scrollLeft = Math.max(0, px - w / 2);
-    }
-  }, [currentTime, pps]);
-
-  /* ── Ctrl+Wheel 줌 / Shift+Wheel 가로 스크롤 ── */
+  /* ── Alt+Wheel 줌 / Shift+Wheel 가로 스크롤 ── */
   useEffect(() => {
     const el = mainScrollRef.current;
     if (!el) return;
 
     const handleWheel = (e: WheelEvent) => {
-      // Ctrl(또는 Meta) + 휠 → 줌
-      if (e.ctrlKey || e.metaKey) {
+      // Alt + 휠 → 타임라인 줌 (Ctrl은 브라우저 줌과 충돌)
+      if (e.altKey) {
         e.preventDefault();
-        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        const delta = e.deltaY > 0 ? -0.15 : 0.15;
         const newZoom = Math.max(0.1, Math.min(10, zoom + delta));
 
-        // 줌 시 마우스 위치 기준으로 스크롤 조정
         const rect = el.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const scrollRatio = (el.scrollLeft + mouseX) / (totalW || 1);
 
         setZoom(newZoom);
 
-        // 다음 프레임에 스크롤 위치 보정
         requestAnimationFrame(() => {
           const newTotalW = Math.max(project.duration * PPS_BASE * newZoom, 800);
           el.scrollLeft = scrollRatio * newTotalW - mouseX;
@@ -341,18 +444,18 @@ export const TimelinePanel: React.FC = () => {
         setClipCtxMenu(null);
         return;
       }
-      // 줌 단축키: +/= 줌인, -/_ 줌아웃, 0 줌리셋
-      if (e.key === '=' || e.key === '+') {
+      // 줌 단축키: =/+ 줌인, - 줌아웃, Ctrl+0 줌리셋 (e.code 사용으로 IME 호환)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'Equal' || e.code === 'NumpadAdd')) {
         e.preventDefault();
         setZoom(Math.min(10, zoom + 0.2));
         return;
       }
-      if (e.key === '-' || e.key === '_') {
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'Minus' || e.code === 'NumpadSubtract')) {
         e.preventDefault();
         setZoom(Math.max(0.1, zoom - 0.2));
         return;
       }
-      if (e.key === '0' && (e.ctrlKey || e.metaKey)) {
+      if (e.code === 'Digit0' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         setZoom(1);
         return;
@@ -572,9 +675,10 @@ export const TimelinePanel: React.FC = () => {
         <div
           ref={mainScrollRef}
           onScroll={() => syncScroll('main')}
+          className="hide-scrollbar"
           style={{ 
             flex: 1, 
-            overflowX: 'scroll',
+            overflowX: 'auto',
             overflowY: 'auto',
             position: 'relative' 
           }}
@@ -648,6 +752,9 @@ export const TimelinePanel: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* ── 커스텀 수평 스크롤바 ── */}
+      <TimelineHScrollBar scrollRef={mainScrollRef} totalW={totalW} />
 
       {clipCtxMenu && (() => {
         const found = findClipAndTrack(clipCtxMenu.clipId);
