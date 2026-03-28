@@ -6,13 +6,19 @@ import type { HubModule, HubRenderProps } from '@/types/hub';
 import { registerModules } from '@/engines/hubRegistry';
 
 /* ═══════════════════════════════════════════
-   래핑 팩토리 — 기존 컴포넌트를 HubModule.render로 변환
+   래핑 팩토리 — named export도 지원하는 lazy 래퍼
    ═══════════════════════════════════════════ */
 
-function wrapComponent(
-    loader: () => Promise<{ default: React.ComponentType<any> }>,
+function wrapComponent<T extends Record<string, any>>(
+    loader: () => Promise<T>,
+    namedExport?: keyof T,
 ): (props: HubRenderProps) => React.ReactElement {
-    const LazyComp = React.lazy(loader);
+    const LazyComp = React.lazy(() =>
+        loader().then(mod => {
+            const component = namedExport ? mod[namedExport] : mod.default;
+            return { default: component };
+        }),
+    );
     return (_props: HubRenderProps) =>
         React.createElement(
             React.Suspense,
@@ -32,7 +38,7 @@ const BUILTIN_MODULES: HubModule[] = [
         icon: '📁',
         category: 'media',
         minSkillLevel: 'beginner',
-        render: wrapComponent(() => import('@/components/MediaLibrary/MediaHub')),
+        render: wrapComponent(() => import('@/components/MediaLibrary/MediaHub'), 'MediaHub'),
         searchKeywords: ['미디어', 'media', '파일', '소스', '라이브러리', '가져오기', 'import'],
         description: '프로젝트 미디어 파일 관리 및 타임라인 추가',
         defaultFavorite: true,
@@ -46,7 +52,7 @@ const BUILTIN_MODULES: HubModule[] = [
         icon: '🔤',
         category: 'content',
         minSkillLevel: 'intermediate',
-        render: wrapComponent(() => import('@/components/MediaLibrary/MediaHub')),
+        render: wrapComponent(() => import('@/components/MediaLibrary/MediaHub'), 'MediaHub'),
         searchKeywords: ['텍스트', 'text', '자막', '타이틀', 'subtitle', 'caption'],
         description: '자막, 타이틀, 텍스트 오버레이 추가',
         defaultFavorite: true,
@@ -60,7 +66,7 @@ const BUILTIN_MODULES: HubModule[] = [
         icon: '🎵',
         category: 'audio',
         minSkillLevel: 'intermediate',
-        render: wrapComponent(() => import('@/components/AudioMixer/AudioMixerPanel')),
+        render: wrapComponent(() => import('@/components/AudioMixer/AudioMixerPanel'), 'AudioMixerPanel'),
         searchKeywords: ['오디오', 'audio', '음악', '음향', '사운드', 'bgm', '볼륨'],
         description: '오디오 믹서, 볼륨 조절, 음향 효과',
         defaultFavorite: true,
@@ -74,7 +80,7 @@ const BUILTIN_MODULES: HubModule[] = [
         icon: '✨',
         category: 'visual',
         minSkillLevel: 'intermediate',
-        render: wrapComponent(() => import('@/components/Effects/EffectsPanel')),
+        render: wrapComponent(() => import('@/components/Effects/EffectsPanel'), 'EffectsPanel'),
         searchKeywords: ['이펙트', 'effects', '필터', 'filter', '색보정', '블러', 'blur'],
         description: 'CSS 필터, 색보정, 비주얼 이펙트 적용',
         defaultFavorite: true,
@@ -88,7 +94,7 @@ const BUILTIN_MODULES: HubModule[] = [
         icon: '🤖',
         category: 'ai',
         minSkillLevel: 'advanced',
-        render: wrapComponent(() => import('@/components/MediaLibrary/MediaHub')),
+        render: wrapComponent(() => import('@/components/MediaLibrary/MediaHub'), 'MediaHub'),
         searchKeywords: ['ai', '인공지능', '자동', 'auto', '추천', 'director'],
         description: 'AI 기반 자동 편집, 추천, 태그 분석',
         defaultFavorite: true,
@@ -102,7 +108,7 @@ const BUILTIN_MODULES: HubModule[] = [
         icon: '🎨',
         category: 'content',
         minSkillLevel: 'intermediate',
-        render: wrapComponent(() => import('@/components/MediaLibrary/MediaHub')),
+        render: wrapComponent(() => import('@/components/MediaLibrary/MediaHub'), 'MediaHub'),
         searchKeywords: ['스티커', 'sticker', '이모지', 'emoji', '오버레이', 'overlay'],
         description: '스티커, 이모지, 장식 오버레이 추가',
         defaultFavorite: true,
@@ -116,7 +122,7 @@ const BUILTIN_MODULES: HubModule[] = [
         icon: '🔀',
         category: 'visual',
         minSkillLevel: 'intermediate',
-        render: wrapComponent(() => import('@/components/Effects/TransitionPanel')),
+        render: wrapComponent(() => import('@/components/Effects/TransitionPanel'), 'TransitionPanel'),
         searchKeywords: ['트랜지션', 'transition', '전환', 'dissolve', 'fade', 'wipe'],
         description: '클립 간 전환 효과 적용',
         defaultFavorite: true,
