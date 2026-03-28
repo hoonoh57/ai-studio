@@ -8,6 +8,7 @@ import { LeftPanelHub } from './LeftPanelHub';
 import { PreviewArea } from '@/components/Preview/PreviewArea';
 import { TimelinePanel } from '@/components/Timeline/TimelinePanel';
 import { PropertiesPanel } from '@/components/Properties/PropertiesPanel';
+import { StudioHub } from '@/components/Hub/StudioHub';
 import { useAssetVisualization } from '@/hooks/useAssetVisualization';
 import css from './EditorLayout.module.css';
 
@@ -58,6 +59,7 @@ export function EditorLayout(): React.ReactElement {
   if (activeTab === 'ai-creator') {
     return (
       <div className={css.app}>
+        <StudioHub />
         <TopBar />
         <BeginnerView />
       </div>
@@ -66,6 +68,7 @@ export function EditorLayout(): React.ReactElement {
 
   return (
     <div className={css.app}>
+      <StudioHub />
       <TopBar />
       <div className={css.main}>
         {config.showIconBar && <IconBarHub />}

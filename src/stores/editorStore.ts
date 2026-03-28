@@ -159,8 +159,6 @@ export interface EditorState {
   setActiveTab: (tab: EditorTab) => void;
   activePanel: PanelId | null;
   setActivePanel: (panel: PanelId | null) => void;
-  activeModuleId: string | null;      // 현재 활성 모듈 ID (null이면 builtin.media)
-  setActiveModuleId: (id: string) => void;
 
   /* Undo/Redo */
   undoStack: HistoryEntry[];
@@ -191,9 +189,9 @@ function nextTrackName(tracks: Track[], type: TrackType): string {
 }
 
 const TRACK_TYPE_COMPAT: Record<TrackType, readonly TrackType[]> = {
-  video:  ['video', 'effect'],
-  audio:  ['audio'],
-  text:   ['text'],
+  video: ['video', 'effect'],
+  audio: ['audio'],
+  text: ['text'],
   effect: ['effect', 'video'],
 };
 
@@ -541,11 +539,11 @@ export const useEditorStore = create<StoreType>((set, get) => ({
           clips: t.clips.map(c =>
             c.id === clipId
               ? {
-                  ...c,
-                  speed: clampedSpeed,
-                  duration: newDuration,
-                  reverse: reverse ?? c.reverse ?? false,
-                }
+                ...c,
+                speed: clampedSpeed,
+                duration: newDuration,
+                reverse: reverse ?? c.reverse ?? false,
+              }
               : c
           ),
         })),
@@ -676,11 +674,11 @@ export const useEditorStore = create<StoreType>((set, get) => ({
               keyframeTracks: c.keyframeTracks.map(kt =>
                 kt.property === property
                   ? {
-                      ...kt,
-                      keyframes: kt.keyframes
-                        .map(kf => kf.id === keyframeId ? { ...kf, ...patch } : kf)
-                        .sort((a, b) => a.time - b.time),
-                    }
+                    ...kt,
+                    keyframes: kt.keyframes
+                      .map(kf => kf.id === keyframeId ? { ...kf, ...patch } : kf)
+                      .sort((a, b) => a.time - b.time),
+                  }
                   : kt
               ),
             };
@@ -714,7 +712,6 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   },
 
   // ─── Effect Instance CRUD ───
-  effects: [] as EffectInstance[],
   addEffect: (effect) => {
     const id = uid('fx');
     set(state => ({
@@ -779,6 +776,7 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   setOutPoint: (t) => set((s) => ({ inOut: { ...s.inOut, outPoint: t } })),
   clearInOut: () => set({ inOut: { inPoint: null, outPoint: null } }),
   transitions: [],
+  effects: [], // ★ ADD
   addTransition: (t) => set((s) => ({ transitions: [...s.transitions, t] })),
   updateTransition: (id, patch) => set((s) => ({
     transitions: s.transitions.map(t => t.id === id ? { ...t, ...patch } : t)
@@ -824,8 +822,6 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   activePanel: null,
   setActivePanel: (panel) => set({ activePanel: panel }),
-  activeModuleId: null,      // 현재 활성 모듈 ID (null이면 builtin.media)
-  setActiveModuleId: (id) => set({ activeModuleId: id }),
 
   /* ──── Undo/Redo ──── */
   undoStack: [],
