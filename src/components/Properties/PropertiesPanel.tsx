@@ -171,7 +171,9 @@ export function PropertiesPanel(): React.ReactElement {
     return isNaN(parsed) ? fallback : parsed;
   };
 
-  const displayName = asset?.name ?? 'Clip';
+  const displayName = clip.textContent
+    ? `🔤 ${clip.textContent.text.substring(0, 15)}${clip.textContent.text.length > 15 ? '…' : ''}`
+    : (asset?.name ?? 'Clip');
 
   return (
     <div style={styles.panel}>

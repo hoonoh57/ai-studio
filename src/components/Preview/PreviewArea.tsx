@@ -98,6 +98,19 @@ export function PreviewArea() {
   const setCurrentTime = useEditorStore(s => s.setCurrentTime);
   const isPlaying = useEditorStore(s => s.isPlaying);
   const togglePlay = useEditorStore(s => s.togglePlay);
+
+  /* ═══ B4-9: 텍스트 드래그 배치 ═══ */
+  const textDragRef = useRef<{
+    clipId: string;
+    startMouseX: number;
+    startMouseY: number;
+    startPosX: number;
+    startPosY: number;
+  } | null>(null);
+
+  const updateTextStyle = useEditorStore(s => s.updateTextStyle);
+  const selectedClipId = useEditorStore(s => s.selectedClipId);
+  const selectClip = useEditorStore(s => s.selectClip);
   const project = useEditorStore(s => s.project);
 
   const fps = project?.fps ?? 30;
@@ -114,6 +127,79 @@ export function PreviewArea() {
   const handleUserGesture = useCallback(() => {
     audioEngine.resume();
   }, []);
+
+  /* ═══ B4-9: 프리뷰 텍스트 드래그 ═══ */
+  const handleCanvasMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    // 캔버스 좌표를 % 좌표로 변환
+    const pctX = (mx / rect.width) * 100;
+    const pctY = (my / rect.height) * 100;
+
+    // 현재 시간에 활성인 텍스트 클립 찾기
+    const state = useEditorStore.getState();
+    const time = state.currentTime;
+
+    for (const track of state.project.tracks) {
+      if (track.type !== 'text' || !track.visible || track.muted) continue;
+      for (const tClip of track.clips) {
+        if (tClip.disabled || !tClip.textContent) continue;
+        if (time < tClip.startTime || time >= tClip.startTime + tClip.duration) continue;
+
+        const st = tClip.textContent.style;
+        // 히트 테스트: 클릭 위치가 텍스트 근처인지 (±15% 허용)
+        const hitRange = 15;
+        if (Math.abs(pctX - st.positionX) < hitRange && Math.abs(pctY - st.positionY) < hitRange) {
+          textDragRef.current = {
+            clipId: tClip.id,
+            startMouseX: e.clientX,
+            startMouseY: e.clientY,
+            startPosX: st.positionX,
+            startPosY: st.positionY,
+          };
+          selectClip(tClip.id);
+          e.preventDefault();
+          return;
+        }
+      }
+    }
+  }, [selectClip]);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const d = textDragRef.current;
+      const canvas = canvasRef.current;
+      if (!d || !canvas) return;
+      const rect = canvas.getBoundingClientRect();
+
+      const dx = e.clientX - d.startMouseX;
+      const dy = e.clientY - d.startMouseY;
+
+      // 마우스 이동량을 % 좌표로 변환
+      const dpctX = (dx / rect.width) * 100;
+      const dpctY = (dy / rect.height) * 100;
+
+      const newX = Math.max(0, Math.min(100, d.startPosX + dpctX));
+      const newY = Math.max(0, Math.min(100, d.startPosY + dpctY));
+
+      updateTextStyle(d.clipId, { positionX: Math.round(newX), positionY: Math.round(newY) });
+    };
+
+    const onUp = () => {
+      textDragRef.current = null;
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [updateTextStyle]);
 
   /* ─── B1-1: 에셋 오디오 버퍼 사전 로딩 ─── */
   const assets = useEditorStore(s => s.project.assets);
@@ -595,9 +681,18 @@ export function PreviewArea() {
               default: break;
             }
 
+            // ── B4-10: 텍스트 클립 키프레임 보간 ──
+            const kf = tClip.keyframeTracks;
+            const kfX = interpolateKfValue(kf, 'x', relTime, 0);
+            const kfY = interpolateKfValue(kf, 'y', relTime, 0);
+            const kfScale = interpolateKfValue(kf, 'scale', relTime, 1);
+            const kfRotation = interpolateKfValue(kf, 'rotation', relTime, 0);
+            const kfOpacity = interpolateKfValue(kf, 'opacity', relTime, 1);
+
             // ── Canvas 텍스트 렌더링 ──
             ctx.save();
-            ctx.globalAlpha = Math.max(0, Math.min(1, animOpacity));
+            const combinedOpacity = Math.max(0, Math.min(1, animOpacity * kfOpacity));
+            ctx.globalAlpha = combinedOpacity;
             if (animBlur > 0) ctx.filter = `blur(${animBlur}px)`;
 
             // ★ B4: 캔버스 크기(w, h)에 따른 폰트/라인/외곽선 스케일링 (1920 기준)
@@ -608,13 +703,15 @@ export function PreviewArea() {
             ctx.textAlign = st.textAlign;
             ctx.textBaseline = 'top';
 
-            const posX = (st.positionX / 100) * w + animOffsetX;
-            const posY = (st.positionY / 100) * h + animOffsetY;
+            const posX = (st.positionX / 100) * w + animOffsetX + kfX * scale;
+            const posY = (st.positionY / 100) * h + animOffsetY + kfY * scale;
 
-            if (animScale !== 1 || animRotation !== 0) {
+            const totalScale = animScale * kfScale;
+            const totalRotation = animRotation + kfRotation;
+            if (totalScale !== 1 || totalRotation !== 0) {
               ctx.translate(posX, posY);
-              if (animRotation !== 0) ctx.rotate((animRotation * Math.PI) / 180);
-              if (animScale !== 1) ctx.scale(animScale, animScale);
+              if (totalRotation !== 0) ctx.rotate((totalRotation * Math.PI) / 180);
+              if (totalScale !== 1) ctx.scale(totalScale, totalScale);
               ctx.translate(-posX, -posY);
             }
 
@@ -738,7 +835,11 @@ export function PreviewArea() {
         flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
         overflow: 'hidden', background: CANVAS_BG, position: 'relative', minHeight: 200,
       }}>
-        <canvas ref={canvasRef} style={{ display: 'block', background: CANVAS_BG }} />
+        <canvas
+        ref={canvasRef}
+        style={{ display: 'block', background: CANVAS_BG, cursor: textDragRef.current ? 'grabbing' : 'default' }}
+        onMouseDown={handleCanvasMouseDown}
+      />
       </div>
       <video ref={videoARef} muted playsInline preload="auto"
         style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} />

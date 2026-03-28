@@ -10,7 +10,7 @@ import {
 } from '@/types/project';
 import type { EffectInstance, EffectKeyframe } from '@/types/effect';
 import { createMediaSlice, MEDIA_INITIAL_STATE, MediaSlice } from './mediaSlice';
-import type { TextContent, TextStyle } from '@/types/textClip';
+import type { TextContent, TextStyle, WordTiming } from '@/types/textClip';
 import { DEFAULT_TEXT_STYLE } from '@/types/textClip';
 import type { SrtEntry } from '@/lib/core/srtParser';
 
@@ -193,6 +193,10 @@ export interface EditorState {
   importSrt: (entries: SrtEntry[]) => void;
   exportSrt: () => SrtEntry[];
   applyStyleToAllTextClips: (stylePatch: Partial<TextStyle>) => void;
+  /* ═══ B4-7: 워드 타이밍 ═══ */
+  updateWordTimings: (clipId: string, wordTimings: WordTiming[]) => void;
+  generateEvenWordTimings: (clipId: string) => void;
+  clearWordTimings: (clipId: string) => void;
   /* Undo/Redo */
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
@@ -1113,6 +1117,75 @@ export const useEditorStore = create<StoreType>((set, get) => ({
             }),
           };
         }),
+      },
+    }));
+  },
+
+  /* ═══ B4-7: 워드 타이밍 ═══ */
+
+  updateWordTimings: (clipId, wordTimings) => {
+    const s = get();
+    s.pushUndo('워드 타이밍 수정');
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c => {
+            if (c.id !== clipId || !c.textContent) return c;
+            return {
+              ...c,
+              textContent: { ...c.textContent, wordTimings },
+            };
+          }),
+        })),
+      },
+    }));
+  },
+
+  generateEvenWordTimings: (clipId) => {
+    const s = get();
+    let targetClip: Clip | undefined;
+    for (const t of s.project.tracks) {
+      const c = t.clips.find(cl => cl.id === clipId);
+      if (c) {
+        targetClip = c;
+        break;
+      }
+    }
+    if (!targetClip?.textContent) return;
+
+    const text = targetClip.textContent.text.trim();
+    const words = text.split(/\s+/).filter(w => w.length > 0);
+    if (words.length === 0) return;
+
+    const duration = targetClip.duration;
+    const wordDur = duration / words.length;
+    const timings: WordTiming[] = words.map((word, i) => ({
+      word,
+      startTime: i * wordDur,
+      endTime: (i + 1) * wordDur,
+    }));
+
+    s.updateWordTimings(clipId, timings);
+  },
+
+  clearWordTimings: (clipId) => {
+    const s = get();
+    s.pushUndo('워드 타이밍 제거');
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c => {
+            if (c.id !== clipId || !c.textContent) return c;
+            return {
+              ...c,
+              textContent: { ...c.textContent, wordTimings: undefined },
+            };
+          }),
+        })),
       },
     }));
   },
