@@ -114,6 +114,21 @@ export function PreviewArea() {
     audioEngine.resume();
   }, []);
 
+  /* ─── B1-1: 에셋 오디오 버퍼 사전 로딩 ─── */
+  const assets = useEditorStore(s => s.project.assets);
+  useEffect(() => {
+    for (const asset of assets) {
+      // 오디오 포함 에셋만 버퍼 로드
+      if (asset.hasAudio || asset.type === 'audio') {
+        if (!audioEngine.getBuffer(asset.id)) {
+          audioEngine.loadBuffer(asset.id, asset.src).catch(() => {
+            console.warn(`[AudioEngine] 버퍼 로드 실패: ${asset.name}`);
+          });
+        }
+      }
+    }
+  }, [assets]);
+
   /* ─── 헬퍼 함수들 ─── */
   function findClipAt(time: number): Clip | null {
     const state = useEditorStore.getState();

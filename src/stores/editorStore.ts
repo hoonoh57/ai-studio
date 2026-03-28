@@ -90,6 +90,10 @@ export interface EditorState {
   removeClip: (clipId: string) => void;
   splitClip: (clipId: string, time: number) => void;
   moveClipToTrack: (clipId: string, fromTrackId: string, toTrackId: string) => void;
+  /* ★ Phase B1: MP4 드롭 시 비디오+오디오 클립 쌍 생성 */
+  addClipFromAsset: (assetId: string, trackId: string, startTime: number) => void;
+  /* ★ Phase B1: 오디오 분리 (초급 UI에서 사용) */
+  separateAudio: (clipId: string) => void;
 
   /* Phase T-3: 클립 고급 편집 */
   setClipSpeed: (clipId: string, speed: number, reverse?: boolean) => void;
@@ -414,15 +418,191 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     },
   })),
 
-  updateClip: (clipId, patch) => set((s) => ({
-    project: {
-      ...s.project,
-      tracks: s.project.tracks.map(t => ({
-        ...t,
-        clips: t.clips.map(c => c.id === clipId ? { ...c, ...patch } : c),
-      })),
-    },
-  })),
+  /* ★ Phase B1: MP4 드롭 시 비디오+오디오 클립 쌍 생성 */
+  addClipFromAsset: (assetId, trackId, startTime) => {
+    const s = get();
+    const asset = s.project.assets.find(a => a.id === assetId);
+    if (!asset) return;
+
+    const skillConfig = SKILL_CONFIGS[s.skillLevel];
+
+    // ── 비디오 클립 생성 ──
+    const videoClipId = uid('clip');
+    const videoClip: Clip = {
+      id: videoClipId,
+      assetId: asset.id,
+      startTime,
+      duration: asset.duration,
+      inPoint: 0,
+      outPoint: asset.duration,
+      transform: { x: 0, y: 0, scale: 1, rotation: 0 },
+      filters: [],
+      blendMode: 'normal',
+      opacity: 1,
+      volume: 1,
+      speed: 1,
+    };
+
+    // ── 오디오가 있는 비디오 에셋이면 오디오 클립도 생성 ──
+    if (asset.type === 'video' && asset.hasAudio) {
+      const audioClipId = uid('clip');
+      const audioClip: Clip = {
+        id: audioClipId,
+        assetId: asset.id,
+        startTime,
+        duration: asset.duration,
+        inPoint: 0,
+        outPoint: asset.duration,
+        transform: { x: 0, y: 0, scale: 1, rotation: 0 },
+        filters: [],
+        blendMode: 'normal',
+        opacity: 1,
+        volume: 1,
+        speed: 1,
+        linkedClipId: videoClipId,
+      };
+
+      // 비디오 클립에 링크 설정
+      videoClip.linkedClipId = audioClipId;
+
+      // 오디오 트랙 찾기 또는 생성
+      let audioTrack = s.project.tracks.find(t => t.type === 'audio');
+      let newTracks = [...s.project.tracks];
+
+      if (!audioTrack) {
+        audioTrack = {
+          id: uid('trk'),
+          name: 'Audio 1',
+          type: 'audio' as const,
+          clips: [],
+          muted: false,
+          locked: false,
+          visible: true,
+          height: 48,
+          heightPreset: 'M' as TrackHeightPreset,
+          color: DEFAULT_TRACK_COLORS.audio,
+          solo: false,
+          order: newTracks.length,
+        };
+        newTracks = [...newTracks, audioTrack];
+      }
+
+      const audioTrackId = audioTrack.id;
+
+      // ★ 스킬 레벨에 따라 오디오 트랙 표시/숨김
+      // 초급: 오디오 트랙은 visible=false로 (엔진에는 존재, UI만 숨김)
+      if (!skillConfig.showLinkedAudioTrack) {
+        newTracks = newTracks.map(t =>
+          t.id === audioTrackId && t.type === 'audio'
+            ? { ...t, visible: false }
+            : t
+        );
+      }
+
+      s.pushUndo('클립 추가 (비디오+오디오)');
+      set((st) => ({
+        project: {
+          ...st.project,
+          tracks: newTracks.map(t => {
+            if (t.id === trackId) {
+              return { ...t, clips: [...t.clips, videoClip] };
+            }
+            if (t.id === audioTrackId) {
+              return { ...t, clips: [...t.clips, audioClip] };
+            }
+            return t;
+          }),
+        },
+      }));
+    } else {
+      // ── 오디오 없는 에셋 또는 오디오 전용 에셋 ──
+      s.pushUndo('클립 추가');
+      set((st) => ({
+        project: {
+          ...st.project,
+          tracks: st.project.tracks.map(t =>
+            t.id === trackId
+              ? { ...t, clips: [...t.clips, videoClip] }
+              : t
+          ),
+        },
+      }));
+    }
+
+    // duration 재계산
+    get().recalcDuration();
+  },
+
+  /* ★ Phase B1: 오디오 분리 (초급 UI에서 '오디오 분리' 메뉴) */
+  separateAudio: (clipId) => {
+    const s = get();
+    let clip: Clip | undefined;
+    for (const t of s.project.tracks) {
+      clip = t.clips.find(c => c.id === clipId);
+      if (clip) break;
+    }
+    if (!clip?.linkedClipId) return;
+
+    // 오디오 클립이 있는 트랙을 visible=true로 변경
+    s.pushUndo('오디오 분리');
+    const linkedId = clip.linkedClipId;
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t => {
+          const hasLinkedClip = t.clips.some(c => c.id === linkedId);
+          if (hasLinkedClip && !t.visible) {
+            return { ...t, visible: true };
+          }
+          return t;
+        }),
+      },
+    }));
+    // 링크 해제
+    get().unlinkClip(clipId);
+  },
+
+  updateClip: (clipId, patch) => set((s) => {
+    // ★ 링크된 클립에 전파할 속성 필터
+    const LINKED_SYNC_KEYS: (keyof Clip)[] = [
+      'startTime', 'duration', 'inPoint', 'outPoint', 'speed',
+    ];
+
+    let linkedId: string | undefined;
+    for (const t of s.project.tracks) {
+      const clip = t.clips.find(c => c.id === clipId);
+      if (clip?.linkedClipId) {
+        linkedId = clip.linkedClipId;
+        break;
+      }
+    }
+
+    // 링크 전파용 패치 생성
+    const linkedPatch: Partial<Clip> = {};
+    if (linkedId) {
+      for (const key of LINKED_SYNC_KEYS) {
+        if (key in patch) {
+          (linkedPatch as any)[key] = (patch as any)[key];
+        }
+      }
+    }
+
+    return {
+      project: {
+        ...s.project,
+        tracks: s.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c => {
+            if (c.id === clipId) return { ...c, ...patch };
+            if (linkedId && c.id === linkedId && Object.keys(linkedPatch).length > 0) {
+              return { ...c, ...linkedPatch };
+            }
+            return c;
+          }),
+        })),
+      },
+    };
+  }),
 
   updateClipsBulk: (updates) => set((s) => {
     const patchMap = new Map(updates.map(u => [u.clipId, u.patch]));
@@ -440,15 +620,30 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     };
   }),
 
-  removeClip: (clipId) => set((s) => ({
-    project: {
-      ...s.project,
-      tracks: s.project.tracks.map(t => ({
-        ...t,
-        clips: t.clips.filter(c => c.id !== clipId),
-      })),
-    },
-  })),
+  removeClip: (clipId) => set((s) => {
+    // ★ 링크된 클립 ID 수집
+    let linkedId: string | undefined;
+    for (const t of s.project.tracks) {
+      const clip = t.clips.find(c => c.id === clipId);
+      if (clip?.linkedClipId) {
+        linkedId = clip.linkedClipId;
+        break;
+      }
+    }
+
+    const idsToRemove = new Set([clipId]);
+    if (linkedId) idsToRemove.add(linkedId);
+
+    return {
+      project: {
+        ...s.project,
+        tracks: s.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.filter(c => !idsToRemove.has(c.id)),
+        })),
+      },
+    };
+  }),
 
   splitClip: (clipId, time) => {
     const s = get();
@@ -461,7 +656,12 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     if (!trackOwner || !clipOwner || trackOwner.locked) return;
     const rel = time - clipOwner.startTime;
     if (rel <= 0 || rel >= clipOwner.duration) return;
+
     s.pushUndo('클립 분할');
+
+    // ── 메인 클립 분할 ──
+    const leftId = clipOwner.id;
+    const rightId = uid('clip');
     const L: Clip = {
       ...JSON.parse(JSON.stringify(clipOwner)),
       duration: rel,
@@ -469,20 +669,81 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     };
     const R: Clip = {
       ...JSON.parse(JSON.stringify(clipOwner)),
-      id: uid('clip'),
+      id: rightId,
       startTime: time,
       duration: clipOwner.duration - rel,
       inPoint: clipOwner.inPoint + rel,
-      linkedClipId: undefined,
     };
+
+    // ── 링크된 클립도 분할 ──
+    let linkedTrackId: string | undefined;
+    let linkedClip: Clip | undefined;
+    let linkedLeftId: string | undefined;
+    let linkedRightId: string | undefined;
+    let linkedL: Clip | undefined;
+    let linkedR: Clip | undefined;
+
+    if (clipOwner.linkedClipId) {
+      for (const t of s.project.tracks) {
+        const lc = t.clips.find(c => c.id === clipOwner!.linkedClipId);
+        if (lc) {
+          linkedTrackId = t.id;
+          linkedClip = lc;
+          break;
+        }
+      }
+
+      if (linkedClip && linkedTrackId) {
+        linkedLeftId = linkedClip.id;
+        linkedRightId = uid('clip');
+        linkedL = {
+          ...JSON.parse(JSON.stringify(linkedClip)),
+          duration: rel,
+          outPoint: linkedClip.inPoint + rel,
+        };
+        linkedR = {
+          ...JSON.parse(JSON.stringify(linkedClip)),
+          id: linkedRightId,
+          startTime: time,
+          duration: linkedClip.duration - rel,
+          inPoint: linkedClip.inPoint + rel,
+        };
+
+        // 새 링크 설정: L↔linkedL, R↔linkedR
+        if (linkedL && linkedR) {
+          L.linkedClipId = linkedLeftId;
+          linkedL.linkedClipId = leftId;
+          R.linkedClipId = linkedRightId;
+          linkedR.linkedClipId = rightId;
+        }
+      }
+    } else {
+      // 링크 없으면 새 클립도 링크 없음
+      R.linkedClipId = undefined;
+    }
+
     set((st) => ({
       project: {
         ...st.project,
-        tracks: st.project.tracks.map(t =>
-          t.id === trackOwner!.id
-            ? { ...t, clips: [...t.clips.filter(c => c.id !== clipId), L, R] }
-            : t
-        ),
+        tracks: st.project.tracks.map(t => {
+          // 메인 클립 트랙
+          if (t.id === trackOwner!.id) {
+            return {
+              ...t,
+              clips: [...t.clips.filter(c => c.id !== clipId), L, R],
+            };
+          }
+          // 링크된 클립 트랙 (lint fix: use local const for narrowing)
+          const _l = linkedL;
+          const _r = linkedR;
+          if (linkedTrackId && t.id === linkedTrackId && _l && _r && linkedClip) {
+            return {
+              ...t,
+              clips: [...t.clips.filter(c => c.id !== linkedClip.id), _l, _r],
+            };
+          }
+          return t;
+        }),
       },
     }));
   },
@@ -531,26 +792,39 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     if (!originalClip) return;
 
     const clampedSpeed = Math.max(0.1, Math.min(10, speed));
-    /* 원본 소스 길이 = (outPoint - inPoint) / 기존 speed */
     const sourceDuration = (originalClip.outPoint - originalClip.inPoint) / originalClip.speed;
     const newDuration = sourceDuration / clampedSpeed;
 
     s.pushUndo('속도 변경');
+
+    // ★ 링크된 클립 ID
+    const linkedId = originalClip.linkedClipId;
+
     set((st) => ({
       project: {
         ...st.project,
         tracks: st.project.tracks.map(t => ({
           ...t,
-          clips: t.clips.map(c =>
-            c.id === clipId
-              ? {
+          clips: t.clips.map(c => {
+            if (c.id === clipId) {
+              return {
                 ...c,
                 speed: clampedSpeed,
                 duration: newDuration,
                 reverse: reverse ?? c.reverse ?? false,
-              }
-              : c
-          ),
+              };
+            }
+            // ★ 링크된 클립도 동일 속도/duration 적용
+            if (linkedId && c.id === linkedId) {
+              return {
+                ...c,
+                speed: clampedSpeed,
+                duration: newDuration,
+                reverse: reverse ?? c.reverse ?? false,
+              };
+            }
+            return c;
+          }),
         })),
       },
     }));

@@ -34,6 +34,9 @@ export interface Asset {
   width?: number;
   height?: number;
   fileSize?: number;
+  /* ★ Phase B1: 오디오/비디오 스트림 존재 여부 */
+  hasAudio?: boolean;
+  hasVideo?: boolean;
 }
 
 export interface Filter {
@@ -147,6 +150,10 @@ export interface SkillConfig {
   showSpeedControl?: boolean;
   showClipContextMenu?: boolean;
   showClipGrouping?: boolean;
+  /* ★ Phase B1: 비디오-오디오 링크 동작 설정 */
+  autoLinkAudioVideo?: boolean;
+  showLinkedAudioTrack?: boolean;
+  showSeparateAudioMenu?: boolean;
 }
 
 export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
@@ -174,6 +181,10 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     showSpeedControl: false,
     showClipContextMenu: false,
     showClipGrouping: false,
+    /* ★ 초급: 오디오 트랙 숨김, 분리 메뉴 제공 */
+    autoLinkAudioVideo: true,
+    showLinkedAudioTrack: false,
+    showSeparateAudioMenu: true,
   },
   intermediate: {
     label: '중급',
@@ -199,6 +210,10 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     showSpeedControl: true,
     showClipContextMenu: true,
     showClipGrouping: false,
+    /* ★ 중급 이상: 오디오 트랙 바로 표시 */
+    autoLinkAudioVideo: true,
+    showLinkedAudioTrack: true,
+    showSeparateAudioMenu: true,
   },
   advanced: {
     label: '고급',
@@ -224,6 +239,9 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     showSpeedControl: true,
     showClipContextMenu: true,
     showClipGrouping: true,
+    autoLinkAudioVideo: true,
+    showLinkedAudioTrack: true,
+    showSeparateAudioMenu: true,
   },
   expert: {
     label: '전문가',
@@ -249,6 +267,9 @@ export const SKILL_CONFIGS: Record<SkillLevel, SkillConfig> = {
     showSpeedControl: true,
     showClipContextMenu: true,
     showClipGrouping: true,
+    autoLinkAudioVideo: true,
+    showLinkedAudioTrack: true,
+    showSeparateAudioMenu: true,
   },
 };
 

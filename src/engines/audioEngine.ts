@@ -229,13 +229,15 @@ export function createAudioEngine(): AudioEngineApi {
         }
 
         const anySolo = tracks.some(
-            t => (t.type === 'audio' || t.type === 'video') && t.solo,
+            t => t.type === 'audio' && t.solo,
         );
 
         const shouldPlayClips = new Set<string>();
 
         for (const track of tracks) {
-            if (track.type !== 'audio' && track.type !== 'video') continue;
+            // ★ 오디오 트랙의 클립만 재생 (비디오 트랙 제외)
+            // 비디오 에셋의 오디오는 링크된 오디오 클립이 오디오 트랙에 존재
+            if (track.type !== 'audio') continue;
             if (!track.visible) continue;
 
             const trackMuted = track.muted
