@@ -199,6 +199,7 @@ export const TimelinePanel: React.FC = () => {
   const dragRef = useRef<DragState | null>(null);
   const trackRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const syncingRef = useRef(false);
+  const mousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const [dragTrackFrom, setDragTrackFrom] = useState<number | null>(null);
   const [dragTrackTo, setDragTrackTo] = useState<number | null>(null);
@@ -234,6 +235,15 @@ export const TimelinePanel: React.FC = () => {
       else main.scrollTop = label.scrollTop;
     }
     requestAnimationFrame(() => { syncingRef.current = false; });
+  }, []);
+
+  /* ★ 마우스 위치 추적 (Delete 키프레임 영역 감지용) */
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      mousePosRef.current = { x: e.clientX, y: e.clientY };
+    };
+    window.addEventListener('mousemove', handler);
+    return () => window.removeEventListener('mousemove', handler);
   }, []);
 
   /* ── Alt+Wheel 줌 / Shift+Wheel 가로 스크롤 ── */
@@ -448,8 +458,10 @@ export const TimelinePanel: React.FC = () => {
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         // ★ 키프레임 다이아몬드 호버 중이면 클립 삭제 차단
-        const isKfArea = Array.from(document.querySelectorAll(':hover')).some(
-          el => (el as HTMLElement).closest?.('[data-keyframe-area="true"]')
+        const { x, y } = mousePosRef.current;
+        const els = document.elementsFromPoint(x, y);
+        const isKfArea = els.some(
+          el => el instanceof HTMLElement && el.closest('[data-keyframe-area="true"]')
         );
         if (isKfArea) { e.preventDefault(); return; }
 

@@ -6,36 +6,39 @@ import type { Clip, KeyframeTrack } from '@/types/project';
 
 const CANVAS_BG = '#000000';
 const PRELOAD_AHEAD = 0.5;
+const DEBUG_KF = true; // ★ 디버그 플래그 — 검증 완료 후 false로 변경
 
-/* ★ 이징 함수 (canvasRenderer.ts와 동일) */
+/* ★ 이징 함수 */
 function applyEasing(t: number, easing: string): number {
+  const c = Math.max(0, Math.min(1, t));
   switch (easing) {
-    case 'linear': return t;
-    case 'ease-in': return t * t;
-    case 'ease-out': return t * (2 - t);
-    case 'ease-in-out': return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-    case 'ease-in-cubic': return t * t * t;
-    case 'ease-out-cubic': { const u = t - 1; return u * u * u + 1; }
+    case 'linear': return c;
+    case 'ease-in': return c * c;
+    case 'ease-out': return c * (2 - c);
+    case 'ease-in-out': return c < 0.5 ? 2 * c * c : -1 + (4 - 2 * c) * c;
+    case 'ease-in-cubic': return c * c * c;
+    case 'ease-out-cubic': { const u = c - 1; return u * u * u + 1; }
     case 'ease-in-out-cubic':
-      return t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1;
-    case 'ease-in-back': return 2.70158 * t * t * t - 1.70158 * t * t;
+      return c < 0.5 ? 4 * c * c * c : (c - 1) * (2 * c - 2) * (2 * c - 2) + 1;
+    case 'ease-in-back': return 2.70158 * c * c * c - 1.70158 * c * c;
     case 'ease-out-back': {
-      const c = 1.70158; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2);
+      const k = 1.70158; return 1 + (k + 1) * Math.pow(c - 1, 3) + k * Math.pow(c - 1, 2);
     }
     case 'ease-out-bounce': {
-      if (t < 1 / 2.75) return 7.5625 * t * t;
-      if (t < 2 / 2.75) return 7.5625 * (t -= 1.5 / 2.75) * t + 0.75;
-      if (t < 2.5 / 2.75) return 7.5625 * (t -= 2.25 / 2.75) * t + 0.9375;
-      return 7.5625 * (t -= 2.625 / 2.75) * t + 0.984375;
+      let b = c;
+      if (b < 1 / 2.75) return 7.5625 * b * b;
+      if (b < 2 / 2.75) return 7.5625 * (b -= 1.5 / 2.75) * b + 0.75;
+      if (b < 2.5 / 2.75) return 7.5625 * (b -= 2.25 / 2.75) * b + 0.9375;
+      return 7.5625 * (b -= 2.625 / 2.75) * b + 0.984375;
     }
     case 'ease-out-elastic': {
-      if (t === 0 || t === 1) return t;
-      return Math.pow(2, -10 * t) * Math.sin((t - 0.075) * (2 * Math.PI) / 0.3) + 1;
+      if (c === 0 || c === 1) return c;
+      return Math.pow(2, -10 * c) * Math.sin((c - 0.075) * (2 * Math.PI) / 0.3) + 1;
     }
     case 'spring': {
-      return Math.min(1, Math.max(0, Math.pow(2, -10 * t) * Math.sin((t - 0.1) * 5 * Math.PI) + 1));
+      return Math.min(1, Math.max(0, Math.pow(2, -10 * c) * Math.sin((c - 0.1) * 5 * Math.PI) + 1));
     }
-    default: return t;
+    default: return c;
   }
 }
 
@@ -46,11 +49,12 @@ function interpolateKfValue(
   relativeTime: number,
   defaultValue: number,
 ): number {
-  if (!kfTracks) return defaultValue;
+  if (!kfTracks || kfTracks.length === 0) return defaultValue;
   const kt = kfTracks.find(t => t.property === property && t.enabled);
   if (!kt || kt.keyframes.length === 0) return defaultValue;
 
-  const kfs = kt.keyframes;
+  const kfs = [...kt.keyframes].sort((a, b) => a.time - b.time);
+  if (kfs.length === 1) return kfs[0].value;
   if (relativeTime <= kfs[0].time) return kfs[0].value;
   if (relativeTime >= kfs[kfs.length - 1].time) return kfs[kfs.length - 1].value;
 
@@ -58,7 +62,9 @@ function interpolateKfValue(
     if (relativeTime >= kfs[i].time && relativeTime <= kfs[i + 1].time) {
       const t0 = kfs[i].time, t1 = kfs[i + 1].time;
       const v0 = kfs[i].value, v1 = kfs[i + 1].value;
-      const progress = (t1 - t0) > 0 ? (relativeTime - t0) / (t1 - t0) : 0;
+      const span = t1 - t0;
+      if (span <= 0) return v0;
+      const progress = (relativeTime - t0) / span;
       const eased = applyEasing(progress, kfs[i + 1].easing || 'linear');
       return v0 + (v1 - v0) * eased;
     }
@@ -66,7 +72,7 @@ function interpolateKfValue(
   return defaultValue;
 }
 
-/* ★ 키프레임 트랙에 특정 속성이 활성화되어 있는지 확인 */
+/* ★ 키프레임 트랙에 특정 속성이 활성화+데이터 있는지 */
 function hasKfProperty(kfTracks: KeyframeTrack[] | undefined, property: string): boolean {
   if (!kfTracks) return false;
   return kfTracks.some(t => t.property === property && t.enabled && t.keyframes.length > 0);
@@ -83,7 +89,8 @@ export function PreviewArea() {
   const loadedB = useRef<{ src: string; clipId: string }>({ src: '', clipId: '' });
   const lastFrameData = useRef<ImageData | null>(null);
 
-  const activeVideoRef = useRef<'A' | 'B'>('A');
+  // 디버그: 마지막 로그 시간
+  const lastDebugLog = useRef<number>(0);
 
   const currentTime = useEditorStore(s => s.currentTime);
   const setCurrentTime = useEditorStore(s => s.setCurrentTime);
@@ -96,10 +103,10 @@ export function PreviewArea() {
   const projH = project?.height ?? 1080;
 
   /* ─── 헬퍼 함수들 ─── */
-  function findClipAt(time: number) {
+  function findClipAt(time: number): Clip | null {
     const state = useEditorStore.getState();
     for (const track of state.project.tracks) {
-      if (!track.clips) continue;
+      if (!track.clips || track.type === 'audio') continue; // 오디오 트랙 제외
       for (const clip of track.clips) {
         if (time >= clip.startTime && time < clip.startTime + clip.duration) return clip;
       }
@@ -107,7 +114,7 @@ export function PreviewArea() {
     return null;
   }
 
-  function findNextClip(currentClip: any) {
+  function findNextClip(currentClip: Clip): Clip | null {
     const state = useEditorStore.getState();
     for (const track of state.project.tracks) {
       if (!track.clips) continue;
@@ -122,7 +129,7 @@ export function PreviewArea() {
     const state = useEditorStore.getState();
     if (!state.transitions || state.transitions.length === 0) return null;
     for (const t of state.transitions) {
-      let clipA: any = null, clipB: any = null;
+      let clipA: Clip | null = null, clipB: Clip | null = null;
       for (const track of state.project.tracks) {
         for (const clip of track.clips) {
           if (clip.id === t.clipAId) clipA = clip;
@@ -171,13 +178,13 @@ export function PreviewArea() {
 
   function ensurePlaying(video: HTMLVideoElement, speed: number) {
     video.muted = true;
-    video.playbackRate = speed;
+    video.playbackRate = Math.max(0.1, Math.min(16, speed));
     if (video.paused && video.src) {
       video.play().catch(() => { });
     }
   }
 
-  /* ★ 키프레임 기반 transform + filter 적용 후 비디오 그리기 */
+  /* ★ 키프레임 기반 transform + filter 적용 후 소스 그리기 */
   function drawClipWithKeyframes(
     source: CanvasImageSource,
     ctx: CanvasRenderingContext2D,
@@ -186,21 +193,36 @@ export function PreviewArea() {
     relTime: number,
   ) {
     const kf = clip.keyframeTracks;
+    const hasAnyKf = kf && kf.length > 0 && kf.some(t => t.enabled && t.keyframes.length > 0);
 
     // 1) 키프레임에서 보간된 값 읽기
-    const kfX = interpolateKfValue(kf, 'x', relTime, clip.transform?.x ?? 0);
-    const kfY = interpolateKfValue(kf, 'y', relTime, clip.transform?.y ?? 0);
-    const kfScale = interpolateKfValue(kf, 'scale', relTime, clip.transform?.scale ?? 1);
-    const kfRotation = interpolateKfValue(kf, 'rotation', relTime, clip.transform?.rotation ?? 0);
+    const kfX = interpolateKfValue(kf, 'x', relTime, 0);
+    const kfY = interpolateKfValue(kf, 'y', relTime, 0);
+    const kfScale = interpolateKfValue(kf, 'scale', relTime, 1);
+    const kfRotation = interpolateKfValue(kf, 'rotation', relTime, 0);
     const kfOpacity = interpolateKfValue(kf, 'opacity', relTime, clip.opacity ?? 1);
     const kfBlur = interpolateKfValue(kf, 'blur', relTime, 0);
     const kfBrightness = interpolateKfValue(kf, 'brightness', relTime, 0);
     const kfContrast = interpolateKfValue(kf, 'contrast', relTime, 0);
 
-    // 2) CSS filter 문자열 생성 (clip.filters + 키프레임 기반 필터)
+    // ★ 디버그 로그 (0.5초 간격)
+    if (DEBUG_KF && hasAnyKf) {
+      const now = performance.now();
+      if (now - lastDebugLog.current > 500) {
+        lastDebugLog.current = now;
+        console.log('[KF DEBUG]', {
+          clipId: clip.id,
+          relTime: relTime.toFixed(3),
+          tracks: kf?.map(t => `${t.property}(${t.enabled ? 'ON' : 'OFF'}): ${t.keyframes.length}kf`),
+          values: { kfX, kfY, kfScale, kfRotation, kfOpacity, kfBlur, kfBrightness, kfContrast },
+        });
+      }
+    }
+
+    // 2) CSS filter 문자열 생성
     const filterParts: string[] = [];
 
-    // clip.filters (이펙트 패널에서 추가한 필터) 적용
+    // clip.filters (이펙트 패널에서 추가한 필터)
     if (clip.filters && clip.filters.length > 0) {
       for (const f of clip.filters) {
         const p = f.params || {};
@@ -218,16 +240,10 @@ export function PreviewArea() {
       }
     }
 
-    // 키프레임 기반 필터 (이펙트 패널과 별개)
-    if (hasKfProperty(kf, 'blur') && kfBlur > 0) {
-      filterParts.push(`blur(${kfBlur}px)`);
-    }
-    if (hasKfProperty(kf, 'brightness') && kfBrightness !== 0) {
-      filterParts.push(`brightness(${1 + kfBrightness / 100})`);
-    }
-    if (hasKfProperty(kf, 'contrast') && kfContrast !== 0) {
-      filterParts.push(`contrast(${1 + kfContrast / 100})`);
-    }
+    // 키프레임 기반 필터
+    if (hasKfProperty(kf, 'blur') && kfBlur > 0) filterParts.push(`blur(${kfBlur}px)`);
+    if (hasKfProperty(kf, 'brightness') && kfBrightness !== 0) filterParts.push(`brightness(${1 + kfBrightness / 100})`);
+    if (hasKfProperty(kf, 'contrast') && kfContrast !== 0) filterParts.push(`contrast(${1 + kfContrast / 100})`);
 
     // 3) 소스 원본 크기 → aspect-fit 계산
     let sw = cw, sh = ch;
@@ -250,27 +266,31 @@ export function PreviewArea() {
     // 4) canvas 상태 저장 → transform + filter 적용 → 그리기 → 복원
     ctx.save();
 
-    // opacity
+    // opacity — 0~1 클램프
     ctx.globalAlpha = Math.max(0, Math.min(1, kfOpacity));
 
     // CSS filter
     if (filterParts.length > 0) {
       ctx.filter = filterParts.join(' ');
+    } else {
+      ctx.filter = 'none';
     }
 
-    // transform: 중심점 기준 이동/회전/스케일
-    const cx = cw / 2 + kfX;
-    const cy = ch / 2 + kfY;
-    ctx.translate(cx, cy);
+    // ★ 핵심 수정: 피봇 기준 transform
+    // transform: 피봇 기준 이동/회전/스케일 (★ 핵심 수정)
+    const pivotX = cw / 2 + kfX;
+    const pivotY = ch / 2 + kfY;
+    ctx.translate(pivotX, pivotY);
     if (kfRotation !== 0) {
       ctx.rotate((kfRotation * Math.PI) / 180);
     }
     if (kfScale !== 1) {
       ctx.scale(kfScale, kfScale);
     }
-    ctx.translate(-cw / 2, -ch / 2);
+    ctx.translate(-pivotX, -pivotY);
 
-    ctx.drawImage(source, dx, dy, dw, dh);
+    // X, Y 오프셋 적용 (translate 이후 drawImage 좌표에 반영)
+    ctx.drawImage(source, dx + kfX, dy + kfY, dw, dh);
 
     ctx.restore();
   }
@@ -428,18 +448,17 @@ export function PreviewArea() {
       } else if (clip) {
         const srcA = getAssetSrc(clip.assetId);
         const localA = time - clip.startTime + (clip.inPoint || 0);
-        const relTime = time - clip.startTime; // ★ 클립 내 상대 시간
+        const relTime = time - clip.startTime; // ★ 클립 내 상대 시간 (키프레임 기준)
 
+        // 비디오 B에 이미 같은 클립이 로드된 경우 (프리로드 스왑)
         if (loadedB.current.clipId === clip.id && loadedB.current.src === srcA) {
           const tempLoaded = { ...loadedA.current };
           loadedA.current = { ...loadedB.current };
           loadedB.current = tempLoaded;
 
           if (playing) ensurePlaying(videoB, clip.speed || 1);
-          if (!playing) {
-            if (Math.abs(videoB.currentTime - localA) > 0.05) {
-              videoB.currentTime = Math.max(0, localA);
-            }
+          if (!playing && Math.abs(videoB.currentTime - localA) > 0.05) {
+            videoB.currentTime = Math.max(0, localA);
           }
 
           if (isVideoReady(videoB)) {
@@ -450,10 +469,12 @@ export function PreviewArea() {
 
           ensureVideoLoaded(videoA, loadedA, srcA, clip.id, localA);
         } else {
+          // 일반 경로: videoA에 로드
           ensureVideoLoaded(videoA, loadedA, srcA, clip.id, localA);
 
           if (playing) ensurePlaying(videoA, clip.speed || 1);
 
+          // 다음 클립 프리로드
           const clipEnd = clip.startTime + clip.duration;
           const timeToEnd = clipEnd - time;
           if (timeToEnd <= PRELOAD_AHEAD && timeToEnd > 0) {
@@ -480,7 +501,7 @@ export function PreviewArea() {
 
       // 프레임 보존
       if (didDraw) {
-        try { lastFrameData.current = ctx.getImageData(0, 0, w, h); } catch { }
+        try { lastFrameData.current = ctx.getImageData(0, 0, w, h); } catch { /* noop */ }
       } else if (lastFrameData.current) {
         if (lastFrameData.current.width === w && lastFrameData.current.height === h) {
           ctx.putImageData(lastFrameData.current, 0, 0);
