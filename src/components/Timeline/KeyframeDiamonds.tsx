@@ -1,18 +1,18 @@
 /* ─── src/components/Timeline/KeyframeDiamonds.tsx ─── */
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useRef } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import type { Clip, KeyframeProperty } from '@/types/project';
 
-/* ── 속성별 색상 매핑 (Premiere Pro 스타일) ── */
+/* ── 속성별 색상 매핑 ── */
 const PROPERTY_COLORS: Record<KeyframeProperty, string> = {
-  x:          '#ff6b6b',   // position — 빨강
+  x:          '#ff6b6b',
   y:          '#ff6b6b',
-  scale:      '#51cf66',   // scale — 초록
-  rotation:   '#ff922b',   // rotation — 주황
-  opacity:    '#339af0',   // opacity — 파랑
-  volume:     '#20c997',   // audio — 청록
-  blur:       '#cc5de8',   // effect — 보라
-  brightness: '#fcc419',   // color — 노랑
+  scale:      '#51cf66',
+  rotation:   '#ff922b',
+  opacity:    '#339af0',
+  volume:     '#20c997',
+  blur:       '#cc5de8',
+  brightness: '#fcc419',
   contrast:   '#fcc419',
 };
 
@@ -21,17 +21,26 @@ const PROPERTY_LABELS: Record<KeyframeProperty, string> = {
   volume: 'Vol', blur: 'Blur', brightness: 'Br', contrast: 'Ct',
 };
 
+/* hex → rgba 변환 (SVG stroke 호환) */
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 /* ── 상수 ── */
-const DIAMOND_SIZE = 8;           // 다이아몬드 한 변의 반쪽 크기 (px)
-const LANE_HEIGHT = 12;           // 속성당 레인 높이
-const LANE_GAP = 1;               // 레인 간 간격
-const MIN_CLIP_WIDTH_FOR_KF = 30; // 이 폭 이하면 표시 안 함
+const DIAMOND_SIZE = 8;
+const LANE_HEIGHT = 14;
+const LANE_GAP = 1;
+const MIN_CLIP_WIDTH_FOR_KF = 30;
+const DRAG_THRESHOLD = 3;        // ★ 이 px 이상 움직여야 드래그로 인식
 
 interface KeyframeDiamondsProps {
   clip: Clip;
-  pps: number;                     // pixels per second
-  clipWidthPx: number;            // 클립 전체 폭 (px)
-  maxHeight: number;               // 사용 가능한 높이 (클립 하단 영역)
+  pps: number;
+  clipWidthPx: number;
+  maxHeight: number;
 }
 
 export function KeyframeDiamonds({
@@ -43,27 +52,28 @@ export function KeyframeDiamonds({
   const pushUndo = useEditorStore(s => s.pushUndo);
   const updateKeyframe = useEditorStore(s => s.updateKeyframe);
   const removeKeyframe = useEditorStore(s => s.removeKeyframe);
+
   const dragRef = useRef<{
     kfId: string;
     property: KeyframeProperty;
     startX: number;
     startTime: number;
+    hasMoved: boolean;          // ★ 실제 이동 여부 추적
+    undoPushed: boolean;        // ★ undo 중복 방지
   } | null>(null);
 
   const tracks = clip.keyframeTracks;
   if (!tracks || tracks.length === 0) return null;
   if (clipWidthPx < MIN_CLIP_WIDTH_FOR_KF) return null;
 
-  // 활성화된 트랙만 필터링 (키프레임이 1개 이상)
   const activeTracks = tracks.filter(kt => kt.enabled && kt.keyframes.length > 0);
   if (activeTracks.length === 0) return null;
 
-  // 최대 표시 가능 트랙 수 (높이 제한)
   const maxLanes = Math.floor(maxHeight / (LANE_HEIGHT + LANE_GAP));
   const visibleTracks = activeTracks.slice(0, Math.max(1, maxLanes));
   const totalH = visibleTracks.length * (LANE_HEIGHT + LANE_GAP);
 
-  /* ── 드래그 핸들링 ── */
+  /* ── 드래그 핸들링 (threshold 적용) ── */
   const handleDiamondMouseDown = useCallback((
     e: React.MouseEvent,
     kfId: string,
@@ -72,19 +82,35 @@ export function KeyframeDiamonds({
   ) => {
     e.stopPropagation();
     e.preventDefault();
-    pushUndo('키프레임 이동');
+
     dragRef.current = {
       kfId,
       property,
       startX: e.clientX,
       startTime: kfTime,
+      hasMoved: false,
+      undoPushed: false,
     };
 
     const onMove = (me: MouseEvent) => {
       const d = dragRef.current;
       if (!d) return;
       me.preventDefault();
+
       const dx = me.clientX - d.startX;
+
+      // ★ threshold 미달이면 아직 드래그 아님
+      if (!d.hasMoved && Math.abs(dx) < DRAG_THRESHOLD) return;
+
+      // ★ 첫 이동 시에만 undo push
+      if (!d.hasMoved) {
+        d.hasMoved = true;
+        if (!d.undoPushed) {
+          pushUndo('키프레임 이동');
+          d.undoPushed = true;
+        }
+      }
+
       const dt = dx / pps;
       const newTime = Math.max(0, Math.min(clip.duration, d.startTime + dt));
       updateKeyframe(clip.id, d.property, d.kfId, { time: newTime });
@@ -100,14 +126,16 @@ export function KeyframeDiamonds({
     document.addEventListener('mouseup', onUp);
   }, [clip.id, clip.duration, pps, pushUndo, updateKeyframe]);
 
-  /* ── 더블클릭 삭제 ── */
-  const handleDiamondDoubleClick = useCallback((
+  /* ── 우클릭 삭제 (더블클릭 대신) ── */
+  const handleDiamondContextMenu = useCallback((
     e: React.MouseEvent,
     kfId: string,
     property: KeyframeProperty,
   ) => {
     e.stopPropagation();
     e.preventDefault();
+    // 드래그 중이면 무시
+    if (dragRef.current?.hasMoved) return;
     pushUndo('키프레임 삭제');
     removeKeyframe(clip.id, property, kfId);
   }, [clip.id, pushUndo, removeKeyframe]);
@@ -120,7 +148,7 @@ export function KeyframeDiamonds({
         right: 0,
         bottom: 0,
         height: totalH,
-        pointerEvents: 'none',     // 컨테이너 자체는 통과
+        pointerEvents: 'none',
         zIndex: 6,
       }}
     >
@@ -140,17 +168,17 @@ export function KeyframeDiamonds({
               height: LANE_HEIGHT,
             }}
           >
-            {/* 레인 배경 (반투명 줄) */}
+            {/* 레인 배경 */}
             <div
               style={{
                 position: 'absolute',
                 inset: 0,
-                background: `${color}08`,
-                borderTop: `1px solid ${color}20`,
+                background: hexToRgba(color, 0.06),
+                borderTop: `1px solid ${hexToRgba(color, 0.15)}`,
               }}
             />
 
-            {/* 속성 레이블 (좌측) */}
+            {/* 속성 레이블 */}
             <div
               style={{
                 position: 'absolute',
@@ -159,7 +187,7 @@ export function KeyframeDiamonds({
                 height: LANE_HEIGHT,
                 lineHeight: `${LANE_HEIGHT}px`,
                 fontSize: 7,
-                color: `${color}aa`,
+                color: hexToRgba(color, 0.7),
                 fontWeight: 700,
                 letterSpacing: 0.3,
                 pointerEvents: 'none',
@@ -169,17 +197,18 @@ export function KeyframeDiamonds({
               {label}
             </div>
 
-            {/* 키프레임 사이 연결선 */}
+            {/* ★ 연결선 — SVG에 고정 width 사용 */}
             {kt.keyframes.length > 1 && (
               <svg
+                width={clipWidthPx}
+                height={LANE_HEIGHT}
                 style={{
                   position: 'absolute',
                   top: 0,
                   left: 0,
-                  width: '100%',
-                  height: LANE_HEIGHT,
                   pointerEvents: 'none',
                   zIndex: 1,
+                  overflow: 'visible',
                 }}
               >
                 {kt.keyframes.slice(0, -1).map((kf, i) => {
@@ -194,9 +223,9 @@ export function KeyframeDiamonds({
                       y1={cy}
                       x2={x2}
                       y2={cy}
-                      stroke={`${color}60`}
-                      strokeWidth={1.5}
-                      strokeDasharray={kf.easing === 'linear' ? 'none' : '3 2'}
+                      stroke={hexToRgba(color, 0.5)}
+                      strokeWidth={2}
+                      strokeDasharray={kf.easing === 'linear' ? 'none' : '4 3'}
                     />
                   );
                 })}
@@ -217,18 +246,17 @@ export function KeyframeDiamonds({
                     top: cy - DIAMOND_SIZE,
                     width: DIAMOND_SIZE * 2,
                     height: DIAMOND_SIZE * 2,
-                    pointerEvents: 'auto',       // ★ 다이아몬드만 클릭 가능
+                    pointerEvents: 'auto',
                     cursor: 'ew-resize',
                     zIndex: 5,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                   }}
-                  title={`${label}: ${kf.value.toFixed(2)} @ ${kf.time.toFixed(2)}s (${kf.easing})`}
+                  title={`${label}: ${kf.value.toFixed(2)} @ ${kf.time.toFixed(2)}s [${kf.easing}]\n우클릭: 삭제`}
                   onMouseDown={e => handleDiamondMouseDown(e, kf.id, kt.property, kf.time)}
-                  onDoubleClick={e => handleDiamondDoubleClick(e, kf.id, kt.property)}
+                  onContextMenu={e => handleDiamondContextMenu(e, kf.id, kt.property)}
                 >
-                  {/* 다이아몬드 SVG */}
                   <svg
                     width={DIAMOND_SIZE * 2}
                     height={DIAMOND_SIZE * 2}
@@ -238,7 +266,7 @@ export function KeyframeDiamonds({
                       points={`${DIAMOND_SIZE},1 ${DIAMOND_SIZE * 2 - 1},${DIAMOND_SIZE} ${DIAMOND_SIZE},${DIAMOND_SIZE * 2 - 1} 1,${DIAMOND_SIZE}`}
                       fill={color}
                       stroke="#fff"
-                      strokeWidth={1}
+                      strokeWidth={1.2}
                       opacity={0.95}
                     />
                   </svg>
@@ -249,7 +277,6 @@ export function KeyframeDiamonds({
         );
       })}
 
-      {/* 숨겨진 트랙 표시 (공간 부족 시) */}
       {activeTracks.length > visibleTracks.length && (
         <div
           style={{
