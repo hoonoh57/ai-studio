@@ -38,8 +38,6 @@ function isClipOnLockedTrack(clipId: string, tracks: Track[]): boolean {
 }
 
 /* ── 커스텀 수평 스크롤바 컴포넌트 ── */
-const SCROLLBAR_H = 14;
-
 const TimelineHScrollBar: React.FC<{
   scrollRef: React.RefObject<HTMLDivElement | null>;
   totalW: number;
@@ -162,14 +160,36 @@ const TimelineHScrollBar: React.FC<{
 };
 
 export const TimelinePanel: React.FC = () => {
-  const store = useEditorStore();
-  const {
-    project, zoom, selectedClipId, snapEnabled, markers, inOut,
-    setCurrentTime, selectClip, addClip, updateClip, removeClip,
-    recalcDuration, currentTime, pushUndo, undo, redo, canUndo, canRedo,
-    splitClip, addMarker, togglePlay, skillLevel, addTrackChecked,
-    reorderTracks, moveClipToTrack, linkClips, unlinkClip, trimMode, setZoom,
-  } = store;
+  /* ✅ 수정: 개별 선택자 사용 (원인 1 해결) */
+  const project = useEditorStore(s => s.project);
+  const zoom = useEditorStore(s => s.zoom);
+  const selectedClipId = useEditorStore(s => s.selectedClipId);
+  const snapEnabled = useEditorStore(s => s.snapEnabled);
+  const markers = useEditorStore(s => s.markers);
+  const inOut = useEditorStore(s => s.inOut);
+  const setCurrentTime = useEditorStore(s => s.setCurrentTime);
+  const selectClip = useEditorStore(s => s.selectClip);
+  const addClip = useEditorStore(s => s.addClip);
+  const updateClip = useEditorStore(s => s.updateClip);
+  const removeClip = useEditorStore(s => s.removeClip);
+  const recalcDuration = useEditorStore(s => s.recalcDuration);
+  const currentTime = useEditorStore(s => s.currentTime);
+  const pushUndo = useEditorStore(s => s.pushUndo);
+  const undo = useEditorStore(s => s.undo);
+  const redo = useEditorStore(s => s.redo);
+  const canUndo = useEditorStore(s => s.canUndo);
+  const canRedo = useEditorStore(s => s.canRedo);
+  const splitClip = useEditorStore(s => s.splitClip);
+  const addMarker = useEditorStore(s => s.addMarker);
+  const togglePlay = useEditorStore(s => s.togglePlay);
+  const skillLevel = useEditorStore(s => s.skillLevel);
+  const addTrackChecked = useEditorStore(s => s.addTrackChecked);
+  const reorderTracks = useEditorStore(s => s.reorderTracks);
+  const moveClipToTrack = useEditorStore(s => s.moveClipToTrack);
+  const linkClips = useEditorStore(s => s.linkClips);
+  const unlinkClip = useEditorStore(s => s.unlinkClip);
+  const trimMode = useEditorStore(s => s.trimMode);
+  const setZoom = useEditorStore(s => s.setZoom);
 
   const config = SKILL_CONFIGS[skillLevel] ?? SKILL_CONFIGS.beginner;
 
@@ -395,11 +415,20 @@ export const TimelinePanel: React.FC = () => {
     };
   }, [pps, snap, updateClip, recalcDuration, findTrackAtY, moveClipToTrack, trimMode]);
 
-  /* 키보드 단축키 */
+  /* ✅ 수정: 키보드 핸들러 — 의존성 최소화 버전 (원인 1 해결) */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return;
+
+      // 모든 상태를 핸들러 시점에 직접 읽기
+      const state = useEditorStore.getState();
+      const { 
+        selectedClipId, currentTime, project, 
+        canUndo, canRedo, undo, redo, pushUndo,
+        removeClip, selectClip, splitClip, addMarker,
+        togglePlay, setCurrentTime, zoom, setZoom 
+      } = state;
 
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault(); if (canUndo()) undo(); return;
@@ -410,21 +439,14 @@ export const TimelinePanel: React.FC = () => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
         e.preventDefault(); if (canRedo()) redo(); return;
       }
-      // Ctrl+S: 프로젝트 저장
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        saveProjectToFile();
-        markSaved();
-        return;
+        e.preventDefault(); saveProjectToFile(); markSaved(); return;
       }
-      // Ctrl+O: 프로젝트 열기
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
-        e.preventDefault();
-        openProjectFile();
-        return;
+        e.preventDefault(); openProjectFile(); return;
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedClipId && !isClipOnLockedTrack(selectedClipId, tracks)) {
+        if (selectedClipId && !isClipOnLockedTrack(selectedClipId, project.tracks)) {
           e.preventDefault();
           pushUndo('클립 삭제');
           removeClip(selectedClipId);
@@ -434,7 +456,7 @@ export const TimelinePanel: React.FC = () => {
         return;
       }
       if (e.key.toLowerCase() === 'c' && !e.ctrlKey && !e.metaKey) {
-        if (selectedClipId && !isClipOnLockedTrack(selectedClipId, tracks)) {
+        if (selectedClipId && !isClipOnLockedTrack(selectedClipId, project.tracks)) {
           splitClip(selectedClipId, currentTime);
         }
         return;
@@ -444,14 +466,10 @@ export const TimelinePanel: React.FC = () => {
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && !e.shiftKey) {
-        e.preventDefault();
-        handleLinkSelected();
-        return;
+        e.preventDefault(); handleLinkSelected(); return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && e.shiftKey) {
-        e.preventDefault();
-        handleUnlinkSelected();
-        return;
+        e.preventDefault(); handleUnlinkSelected(); return;
       }
       if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
       if (e.key === 'ArrowLeft') { setCurrentTime(Math.max(0, currentTime - 1 / 30)); return; }
@@ -459,34 +477,21 @@ export const TimelinePanel: React.FC = () => {
       if (e.key === 'Home') { setCurrentTime(0); return; }
       if (e.key === 'End') { setCurrentTime(project.duration); return; }
       if (e.key === 'Escape') {
-        selectClip(null);
-        setSelectedClipIds(new Set());
-        setClipCtxMenu(null);
-        return;
+        selectClip(null); setSelectedClipIds(new Set()); setClipCtxMenu(null); return;
       }
-      // 줌 단축키: =/+ 줌인, - 줌아웃, Ctrl+0 줌리셋 (e.code 사용으로 IME 호환)
       if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'Equal' || e.code === 'NumpadAdd')) {
-        e.preventDefault();
-        setZoom(Math.min(10, zoom + 0.2));
-        return;
+        e.preventDefault(); setZoom(Math.min(10, zoom + 0.2)); return;
       }
       if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'Minus' || e.code === 'NumpadSubtract')) {
-        e.preventDefault();
-        setZoom(Math.max(0.1, zoom - 0.2));
-        return;
+        e.preventDefault(); setZoom(Math.max(0.1, zoom - 0.2)); return;
       }
       if (e.code === 'Digit0' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        setZoom(1);
-        return;
+        e.preventDefault(); setZoom(1); return;
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedClipId, selectedClipIds, currentTime, tracks, project.duration,
-      canUndo, canRedo, undo, redo, pushUndo, removeClip, selectClip,
-      splitClip, addMarker, togglePlay, setCurrentTime,
-      handleLinkSelected, handleUnlinkSelected, zoom, setZoom]);
+  }, [handleLinkSelected, handleUnlinkSelected]);
 
   /* 드롭 처리 */
   const handleDrop = useCallback((e: React.DragEvent, trackId: string) => {

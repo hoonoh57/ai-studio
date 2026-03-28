@@ -712,6 +712,7 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   },
 
   // ─── Effect Instance CRUD ───
+  effects: [] as EffectInstance[],
   addEffect: (effect) => {
     const id = uid('fx');
     set(state => ({
@@ -776,7 +777,6 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   setOutPoint: (t) => set((s) => ({ inOut: { ...s.inOut, outPoint: t } })),
   clearInOut: () => set({ inOut: { inPoint: null, outPoint: null } }),
   transitions: [],
-  effects: [], // ★ ADD
   addTransition: (t) => set((s) => ({ transitions: [...s.transitions, t] })),
   updateTransition: (id, patch) => set((s) => ({
     transitions: s.transitions.map(t => t.id === id ? { ...t, ...patch } : t)
