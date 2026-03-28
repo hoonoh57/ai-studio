@@ -99,7 +99,7 @@ export interface EditorState {
   rippleDelete: (clipId: string) => void;
   closeGap: (trackId: string) => void;
   closeAllGaps: () => void;
-  clipboard: Clip | null;
+  clipboard: Clip[] | null;
   copyClip: () => void;
   pasteClip: () => void;
   duplicateClip: (clipId: string, newStartTime?: number) => void;
@@ -687,53 +687,101 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   copyClip: () => {
     const s = get();
     if (!s.selectedClipId) return;
+
+    const clips: Clip[] = [];
     for (const t of s.project.tracks) {
       const c = t.clips.find(cl => cl.id === s.selectedClipId);
       if (c) {
-        set({ clipboard: JSON.parse(JSON.stringify(c)) });
-        return;
+        clips.push(JSON.parse(JSON.stringify(c)));
+        if (c.linkedClipId) {
+          for (const t2 of s.project.tracks) {
+            const linked = t2.clips.find(cl => cl.id === c.linkedClipId);
+            if (linked) {
+              clips.push(JSON.parse(JSON.stringify(linked)));
+              break;
+            }
+          }
+        }
+        break;
       }
     }
+    if (clips.length > 0) set({ clipboard: clips });
   },
 
   pasteClip: () => {
     const s = get();
-    if (!s.clipboard) return;
+    if (!s.clipboard || s.clipboard.length === 0) return;
 
-    let targetTrackId: string | undefined;
-    // 같은 에셋 타입 트랙 찾기
+    s.pushUndo('클립 붙여넣기');
+
+    const primary = s.clipboard[0];
+    const linked = s.clipboard.length > 1 ? s.clipboard[1] : null;
+
+    const newPrimaryId = uid('clip');
+    const newLinkedId = linked ? uid('clip') : undefined;
+
+    // 비디오 트랙 찾기
+    let videoTrackId: string | undefined;
     for (const t of s.project.tracks) {
-      if (!t.locked && t.clips.some(c => c.assetId === s.clipboard!.assetId)) {
-        targetTrackId = t.id;
+      if (t.type === 'video' && !t.locked) {
+        videoTrackId = t.id;
         break;
       }
     }
-    if (!targetTrackId) {
-      const vt = s.project.tracks.find(t => t.type === 'video' && !t.locked);
-      targetTrackId = vt?.id;
-    }
-    if (!targetTrackId) {
-      const at = s.project.tracks.find(t => !t.locked);
-      targetTrackId = at?.id;
-    }
-    if (!targetTrackId) return;
 
-    s.pushUndo('클립 붙여넣기');
-    const newClip: Clip = {
-      ...JSON.parse(JSON.stringify(s.clipboard)),
-      id: uid('clip'),
+    // 오디오 트랙 찾기
+    let audioTrackId: string | undefined;
+    if (linked) {
+      for (const t of s.project.tracks) {
+        if (t.type === 'audio' && !t.locked) {
+          audioTrackId = t.id;
+          break;
+        }
+      }
+    }
+
+    // 비디오 트랙이 없으면 아무 잠금 안 된 트랙
+    if (!videoTrackId) {
+      const any = s.project.tracks.find(t => !t.locked);
+      videoTrackId = any?.id;
+    }
+    if (!videoTrackId) return;
+
+    const newPrimary: Clip = {
+      ...JSON.parse(JSON.stringify(primary)),
+      id: newPrimaryId,
       startTime: s.currentTime,
-      linkedClipId: undefined,
+      linkedClipId: newLinkedId,
     };
+
+    let newLinked: Clip | undefined;
+    if (linked && audioTrackId && newLinkedId) {
+      newLinked = {
+        ...JSON.parse(JSON.stringify(linked)),
+        id: newLinkedId,
+        startTime: s.currentTime,
+        linkedClipId: newPrimaryId,
+      };
+    } else if (newPrimary.linkedClipId) {
+      // 오디오 트랙이 없으면 링크 해제
+      newPrimary.linkedClipId = undefined;
+    }
 
     set((st) => ({
       project: {
         ...st.project,
-        tracks: st.project.tracks.map(t =>
-          (t.id === targetTrackId ? { ...t, clips: [...t.clips, newClip] } : t)),
+        tracks: st.project.tracks.map(t => {
+          if (t.id === videoTrackId) {
+            return { ...t, clips: [...t.clips, newPrimary] };
+          }
+          if (newLinked && t.id === audioTrackId) {
+            return { ...t, clips: [...t.clips, newLinked!] };
+          }
+          return t;
+        }),
       },
     }));
-    get().selectClip(newClip.id);
+    get().selectClip(newPrimaryId);
     get().recalcDuration();
   },
 

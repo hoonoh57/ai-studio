@@ -43,7 +43,7 @@ export const TrackHeader: React.FC<TrackHeaderProps> = ({
   onDragEnd,
 }) => {
   const store = useEditorStore();
-  const { updateTrack, removeTrack, moveTrack, duplicateTrack, pushUndo, skillLevel, project } = store;
+  const { updateTrack, removeTrack, moveTrack, duplicateTrack, pushUndo, skillLevel, project, closeGap } = store;
   const config = SKILL_CONFIGS[skillLevel] ?? SKILL_CONFIGS.beginner;
 
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
@@ -346,6 +346,19 @@ export const TrackHeader: React.FC<TrackHeaderProps> = ({
               )}
             </>
           )}
+
+          <button
+            style={menuItemStyle(track.locked)}
+            onClick={() => {
+              if (!track.locked) {
+                pushUndo('갭 닫기');
+                closeGap(track.id);
+              }
+              setCtxMenu(null);
+            }}
+          >
+            ⊟ 갭 닫기
+          </button>
 
           <div style={{ height: 1, background: 'var(--border-secondary, #333)', margin: '4px 0' }} />
 

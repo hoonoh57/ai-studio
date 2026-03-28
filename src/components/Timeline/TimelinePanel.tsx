@@ -823,18 +823,6 @@ export const TimelinePanel: React.FC = () => {
           >
             🔓 언링크
           </button>
-          
-          {/* ★ B2-2: 갭 닫기 버튼 */}
-          <button
-            style={{
-              padding: '2px 10px', fontSize: 11, border: 'none', borderRadius: 4,
-              cursor: 'pointer', background: 'var(--bg-secondary, #1e1e2e)', color: '#aaa',
-            }}
-            onClick={() => useEditorStore.getState().closeAllGaps()}
-            title="모든 트랙의 갭 닫기"
-          >
-            ⊟ 갭 닫기
-          </button>
         </div>
       )}
 

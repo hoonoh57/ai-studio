@@ -38,6 +38,7 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({ selectedClipId
     setInPoint, setOutPoint, addMarker,
     undo, redo, canUndo, canRedo, project, splitClip, pushUndo,
     groupClips, ungroupClips,
+    closeAllGaps,  // ★ 추가
   } = useEditorStore();
 
   const config = SKILL_CONFIGS[skillLevel] ?? SKILL_CONFIGS.beginner;
@@ -129,6 +130,14 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({ selectedClipId
         onClick={() => { if (selectedClipId && !isClipLocked(selectedClipId, project.tracks)) { pushUndo('Split Clip'); splitClip(selectedClipId, currentTime); } }}
       >
         ✂
+      </button>
+
+      <button
+        style={btnStyle()}
+        onClick={() => closeAllGaps()}
+        title="모든 트랙의 갭 닫기"
+      >
+        ⊟
       </button>
 
       {/* T-3.3: 클립 그룹핑 버튼 */}
