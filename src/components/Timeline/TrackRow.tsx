@@ -92,7 +92,13 @@ export const TrackRow = forwardRef<HTMLDivElement, TrackRowProps>(({
             <ClipBlock
               clip={clip}
               track={track}
-              assetName={asset?.name ?? 'Unknown'}
+              assetName={
+                clip.textContent
+                  ? (clip.textContent.text.length > 20
+                      ? clip.textContent.text.substring(0, 20) + '…'
+                      : clip.textContent.text)
+                  : (asset?.name ?? 'Unknown')
+              }
               isSelected={isSelected}
               pps={pps}
               trackHeight={track.height}

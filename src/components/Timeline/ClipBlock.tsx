@@ -73,7 +73,10 @@ export function ClipBlock({
 
   const isPrimary = clip.id === selectedClipId;
   const isDisabled = clip.disabled === true;
-  const bgColor = isPrimary ? 'var(--accent-hover)' : (isSelected ? 'var(--accent, #6c5ce7)' : track.color);
+  // ★ B4: 텍스트 클립은 오렌지 계열로 시각 구분
+  const isTextClip = !!clip.textContent;
+  const baseColor = isTextClip ? '#E67E22' : track.color;
+  const bgColor = isPrimary ? 'var(--accent-hover)' : (isSelected ? 'var(--accent, #6c5ce7)' : baseColor);
   const border = isPrimary ? SELECTED_BORDER : (isSelected ? MULTI_SELECTED_BORDER : NORMAL_BORDER);
 
   const showThumbStrip = track.type === 'video' && thumbnailData !== null;
@@ -213,7 +216,7 @@ export function ClipBlock({
 
       {/* Name */}
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none', zIndex: 5 }}>
-        {assetName}
+        {clip.textContent ? '🔤 ' : ''}{assetName}
       </span>
 
       {/* Trim Handles */}

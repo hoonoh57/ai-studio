@@ -600,7 +600,10 @@ export function PreviewArea() {
             ctx.globalAlpha = Math.max(0, Math.min(1, animOpacity));
             if (animBlur > 0) ctx.filter = `blur(${animBlur}px)`;
 
-            const fontStr = `${st.fontStyle} ${st.fontWeight} ${st.fontSize * (w / 1920)}px ${st.fontFamily}`;
+            // ★ B4: 캔버스 크기(w, h)에 따른 폰트/라인/외곽선 스케일링 (1920 기준)
+            const scale = Math.min(w / 1920, h / 1080);
+            const scaledFontSize = Math.max(10, Math.round(st.fontSize * scale));
+            const fontStr = `${st.fontStyle} ${st.fontWeight} ${scaledFontSize}px ${st.fontFamily}`;
             ctx.font = fontStr;
             ctx.textAlign = st.textAlign;
             ctx.textBaseline = 'top';
@@ -617,7 +620,7 @@ export function PreviewArea() {
 
             const displayText = st.animation === 'typewriter' ? tc.text.substring(0, typewriterLen) : tc.text;
             const lines = displayText.split('\n');
-            const lineHeight = st.fontSize * (w / 1920) * 1.3;
+            const lineHeight = scaledFontSize * 1.3;
             const totalHeight = lines.length * lineHeight;
 
             let baseY = posY;
@@ -654,7 +657,7 @@ export function PreviewArea() {
                 ctx.shadowOffsetX = st.shadowOffsetX; ctx.shadowOffsetY = st.shadowOffsetY;
                 if (st.strokeWidth > 0) {
                   ctx.strokeStyle = st.strokeColor;
-                  ctx.lineWidth = st.strokeWidth * (isActive ? hlScale : 1);
+                  ctx.lineWidth = st.strokeWidth * scale * (isActive ? hlScale : 1);
                   ctx.lineJoin = 'round'; ctx.strokeText(wordText, cursorX, baseY);
                 }
                 ctx.fillText(wordText, cursorX, baseY);
@@ -679,7 +682,7 @@ export function PreviewArea() {
                 ctx.shadowColor = st.shadowColor; ctx.shadowBlur = st.shadowBlur;
                 ctx.shadowOffsetX = st.shadowOffsetX; ctx.shadowOffsetY = st.shadowOffsetY;
                 if (st.strokeWidth > 0) {
-                  ctx.strokeStyle = st.strokeColor; ctx.lineWidth = st.strokeWidth;
+                  ctx.strokeStyle = st.strokeColor; ctx.lineWidth = st.strokeWidth * scale;
                   ctx.lineJoin = 'round'; ctx.strokeText(lineText, posX, lineY);
                 }
                 ctx.fillStyle = st.color; ctx.fillText(lineText, posX, lineY);
