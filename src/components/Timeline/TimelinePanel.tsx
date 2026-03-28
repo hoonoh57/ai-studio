@@ -11,6 +11,7 @@ import { Playhead } from './Playhead';
 import { MarkerTrack } from './MarkerTrack';
 import { ClipContextMenu } from './ClipContextMenu';
 import { snapTime } from '@/lib/core/snapEngine';
+import { saveProjectToFile, openProjectFile, markSaved } from '@/lib/core/projectStorage';
 
 /* ========== 상수 ========== */
 const PPS_BASE = 50;
@@ -40,7 +41,7 @@ function isClipOnLockedTrack(clipId: string, tracks: Track[]): boolean {
 const SCROLLBAR_H = 14;
 
 const TimelineHScrollBar: React.FC<{
-  scrollRef: React.RefObject<HTMLDivElement>;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
   totalW: number;
 }> = ({ scrollRef, totalW }) => {
   const trackRef = useRef<HTMLDivElement>(null);
@@ -402,6 +403,19 @@ export const TimelinePanel: React.FC = () => {
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
         e.preventDefault(); if (canRedo()) redo(); return;
+      }
+      // Ctrl+S: 프로젝트 저장
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        saveProjectToFile();
+        markSaved();
+        return;
+      }
+      // Ctrl+O: 프로젝트 열기
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        openProjectFile();
+        return;
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedClipId && !isClipOnLockedTrack(selectedClipId, tracks)) {
