@@ -785,7 +785,7 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     get().recalcDuration();
   },
 
-  /* B2-4: 클립 복제 */
+  /* B2-4: 클립 복제 — 링크된 오디오 포함 */
   duplicateClip: (clipId, newStartTime) => {
     const s = get();
     let targetTrack: Track | undefined;
@@ -801,21 +801,58 @@ export const useEditorStore = create<StoreType>((set, get) => ({
     if (!targetTrack || !targetClip) return;
 
     s.pushUndo('클립 복제');
-    const newClip: Clip = {
+
+    const newPrimaryId = uid('clip');
+    const startAt = newStartTime ?? targetClip.startTime + targetClip.duration;
+
+    // 링크된 클립 찾기
+    let linkedClip: Clip | undefined;
+    let linkedTrack: Track | undefined;
+    if (targetClip.linkedClipId) {
+      for (const t of s.project.tracks) {
+        const lc = t.clips.find(c => c.id === targetClip!.linkedClipId);
+        if (lc) {
+          linkedClip = lc;
+          linkedTrack = t;
+          break;
+        }
+      }
+    }
+
+    const newLinkedId = linkedClip ? uid('clip') : undefined;
+
+    const newPrimary: Clip = {
       ...JSON.parse(JSON.stringify(targetClip)),
-      id: uid('clip'),
-      startTime: newStartTime ?? targetClip.startTime + targetClip.duration,
-      linkedClipId: undefined,
+      id: newPrimaryId,
+      startTime: startAt,
+      linkedClipId: newLinkedId,
     };
+
+    let newLinked: Clip | undefined;
+    if (linkedClip && linkedTrack && newLinkedId) {
+      newLinked = {
+        ...JSON.parse(JSON.stringify(linkedClip)),
+        id: newLinkedId,
+        startTime: startAt,
+        linkedClipId: newPrimaryId,
+      };
+    }
 
     set((st) => ({
       project: {
         ...st.project,
-        tracks: st.project.tracks.map(t =>
-          (t.id === targetTrack!.id ? { ...t, clips: [...t.clips, newClip] } : t)),
+        tracks: st.project.tracks.map(t => {
+          if (t.id === targetTrack!.id) {
+            return { ...t, clips: [...t.clips, newPrimary] };
+          }
+          if (newLinked && linkedTrack && t.id === linkedTrack.id) {
+            return { ...t, clips: [...t.clips, newLinked!] };
+          }
+          return t;
+        }),
       },
     }));
-    get().selectClip(newClip.id);
+    get().selectClip(newPrimaryId);
     get().recalcDuration();
   },
 
