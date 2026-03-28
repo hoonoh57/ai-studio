@@ -76,6 +76,7 @@ export const TrackRow = forwardRef<HTMLDivElement, TrackRowProps>(({
         </div>
       )}
 
+      {/* 클립 블록 */}
       {track.clips.map(clip => {
         const asset = assets.find(a => a.id === clip.assetId);
         /* I-2 FIX: 멀티 셀렉션 하이라이트 */
@@ -113,23 +114,26 @@ export const TrackRow = forwardRef<HTMLDivElement, TrackRowProps>(({
         );
       })}
 
-      {/* 전환 블록 (Phase T-4) */}
-      {store.transitions
-        .filter(t => track.clips.some(c => c.id === t.clipAId))
-        .map(t => {
-          const clipA = track.clips.find(c => c.id === t.clipAId);
-          if (!clipA) return null;
-          const clipAEnd = (clipA.startTime + clipA.duration) * pps;
-          return (
-            <TransitionBlock
-              key={t.id}
-              transition={t}
-              clipAEnd={clipAEnd}
-              pps={pps}
-              trackHeight={track.height}
-            />
-          );
-        })}
+      {/* 전환 블록 — 클립 위에 표시되는 별도 레이어 */}
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 25 }}>
+        {store.transitions
+          .filter(t => track.clips.some(c => c.id === t.clipAId))
+          .map(t => {
+            const clipA = track.clips.find(c => c.id === t.clipAId);
+            if (!clipA) return null;
+            const clipAEnd = (clipA.startTime + clipA.duration) * pps;
+            return (
+              <div key={t.id} style={{ pointerEvents: 'auto' }}>
+                <TransitionBlock
+                  transition={t}
+                  clipAEnd={clipAEnd}
+                  pps={pps}
+                  trackHeight={track.height}
+                />
+              </div>
+            );
+          })}
+      </div>
     </div>
   );
 });

@@ -74,7 +74,7 @@ export const TransitionBlock: React.FC<TransitionBlockProps> = ({
         fontSize: 11,
         fontWeight: 600,
         cursor: 'grab',
-        zIndex: 10,
+        zIndex: 25,
         border: '2px solid #e879f9',
         boxShadow: '0 2px 8px rgba(192,38,211,0.4)',
         userSelect: 'none',
