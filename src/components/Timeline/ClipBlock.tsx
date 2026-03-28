@@ -3,7 +3,44 @@ import React from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import { WaveformView } from './WaveformView';
 import { ThumbnailStrip } from './ThumbnailStrip';
+import { KeyframeDiamonds } from './KeyframeDiamonds';
 import type { Clip, Track } from '@/types/project';
+
+/* ========== 상수 ========== */
+const CLIP_PADDING_TOP = 2;
+const CLIP_PADDING_HORIZONTAL = 8;
+const CLIP_BORDER_RADIUS = 4;
+const CLIP_FONT_SIZE = 11;
+const CLIP_FONT_WEIGHT = 500;
+const HANDLE_WIDTH = 6;
+const THUMBNAIL_HEIGHT_RATIO = 0.6;   // 비디오 상단 60% 썸네일
+const WAVEFORM_HEIGHT_RATIO = 0.4;    // 비디오 하단 40% 파형
+const VISUALIZATION_DIVIDER = '1px solid rgba(255,255,255,0.1)';
+
+const NORMAL_BORDER = '1px solid rgba(0,0,0,0.2)';
+const SELECTED_BORDER = '2px solid #fff';
+const MULTI_SELECTED_BORDER = '2px solid rgba(255,255,255,0.6)';
+
+const badgeBase: React.CSSProperties = {
+  position: 'absolute',
+  fontSize: 9,
+  padding: '1px 3px',
+  background: 'rgba(0,0,0,0.4)',
+  borderRadius: 3,
+  fontWeight: 700,
+  pointerEvents: 'none',
+  zIndex: 10,
+};
+
+const handleBase: React.CSSProperties = {
+  position: 'absolute',
+  top: 0,
+  bottom: 0,
+  width: HANDLE_WIDTH,
+  background: 'rgba(255,255,255,0.1)',
+  cursor: 'ew-resize',
+  zIndex: 15,
+};
 
 interface ClipBlockProps {
   clip: Clip;
@@ -18,51 +55,9 @@ interface ClipBlockProps {
   onTrimRightStart: (e: React.MouseEvent) => void;
 }
 
-const CLIP_PADDING_TOP = 4;
-const CLIP_PADDING_HORIZONTAL = 8;
-const CLIP_BORDER_RADIUS = 4;
-const CLIP_FONT_SIZE = 10;
-const CLIP_FONT_WEIGHT = 500;
-const HANDLE_WIDTH = 6;
-const SELECTED_BORDER = '2px solid #fff';
-const NORMAL_BORDER = '1px solid rgba(255,255,255,0.15)';
-const THUMBNAIL_HEIGHT_RATIO = 0.65;
-const WAVEFORM_HEIGHT_RATIO = 0.35;
-const VISUALIZATION_DIVIDER = '1px solid rgba(255,255,255,0.1)';
-const MULTI_SELECTED_BORDER = '2px solid rgba(108, 92, 231, 0.8)';
-const handleBase: React.CSSProperties = {
-  width: HANDLE_WIDTH,
-  height: '100%',
-  position: 'absolute',
-  top: 0,
-  cursor: 'col-resize',
-  zIndex: 10,
-};
-
-/* ★ NEW: 뱃지 공통 스타일 */
-const badgeBase: React.CSSProperties = {
-  fontSize: 8,
-  opacity: 0.9,
-  pointerEvents: 'none',
-  zIndex: 3,
-  background: 'rgba(0,0,0,0.6)',
-  borderRadius: 2,
-  padding: '1px 4px',
-  position: 'absolute',
-  whiteSpace: 'nowrap',
-};
-
 export function ClipBlock({
-  clip,
-  track,
-  assetName,
-  isSelected,
-  pps,
-  trackHeight,
-  onSelect,
-  onMoveStart,
-  onTrimLeftStart,
-  onTrimRightStart,
+  clip, track, assetName, isSelected, pps, trackHeight,
+  onSelect, onMoveStart, onTrimLeftStart, onTrimRightStart,
 }: ClipBlockProps): React.ReactElement {
   const left = clip.startTime * pps;
   const width = clip.duration * pps;
@@ -86,34 +81,28 @@ export function ClipBlock({
   const thumbHeight = showThumbStrip ? clipHeight * THUMBNAIL_HEIGHT_RATIO : 0;
   const waveHeight = showWave ? (showThumbStrip ? clipHeight * WAVEFORM_HEIGHT_RATIO : clipHeight) : 0;
 
-  /* ★ NEW: 효과/키프레임 카운트 */
   const filterCount = clip.filters?.length ?? 0;
   const kfCount = clip.keyframeTracks?.reduce((sum, kt) => sum + kt.keyframes.length, 0) ?? 0;
+
+  /* ★ E-6a: 키프레임 다이아몬드 표시 조건 */
+  const KF_AREA_MAX_HEIGHT = Math.max(0, clipHeight * 0.4);
+  const hasKeyframes = (clip.keyframeTracks?.some(
+    kt => kt.enabled && kt.keyframes.length > 0
+  )) ?? false;
+  const showKfDiamonds = config.showKeyframes && hasKeyframes;
 
   return (
     <div
       style={{
-        position: 'absolute',
-        left,
-        width,
-        top: CLIP_PADDING_TOP,
-        height: clipHeight,
-        borderRadius: CLIP_BORDER_RADIUS,
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
+        position: 'absolute', left, width,
+        top: CLIP_PADDING_TOP, height: clipHeight,
+        borderRadius: CLIP_BORDER_RADIUS, cursor: 'pointer',
+        display: 'flex', alignItems: 'center',
         padding: `0 ${CLIP_PADDING_HORIZONTAL}px`,
-        fontSize: CLIP_FONT_SIZE,
-        color: '#fff',
-        fontWeight: CLIP_FONT_WEIGHT,
-        overflow: 'hidden',
-        whiteSpace: 'nowrap',
-        textOverflow: 'ellipsis',
-        userSelect: 'none',
-        background: bgColor,
-        border,
-        boxSizing: 'border-box',
-        zIndex: isSelected ? 20 : 1,
+        fontSize: CLIP_FONT_SIZE, color: '#fff', fontWeight: CLIP_FONT_WEIGHT,
+        overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+        userSelect: 'none', background: bgColor, border,
+        boxSizing: 'border-box', zIndex: isSelected ? 20 : 1,
       }}
       onClick={(e) => { e.stopPropagation(); onSelect(e); }}
       onMouseDown={onMoveStart}
@@ -121,96 +110,70 @@ export function ClipBlock({
       {/* Linked Indicator */}
       {clip.linkedClipId && (
         <div style={{
-          position: 'absolute',
-          top: 2,
-          left: 4,
-          fontSize: 10,
-          opacity: 0.6,
-          pointerEvents: 'none',
-          zIndex: 3,
-        }}>
-          🔗
-        </div>
+          position: 'absolute', top: 2, left: 4,
+          fontSize: 10, opacity: 0.6, pointerEvents: 'none', zIndex: 3,
+        }}>🔗</div>
       )}
 
       {/* Visualizations */}
       <div style={{
-        width: '100%',
-        position: 'absolute',
-        top: 0,
-        bottom: 0,
-        left: 0,
-        right: 0,
-        pointerEvents: 'none',
-        display: 'flex',
-        flexDirection: 'column',
+        width: '100%', position: 'absolute',
+        top: 0, bottom: 0, left: 0, right: 0,
+        pointerEvents: 'none', display: 'flex', flexDirection: 'column',
       }}>
         {showThumbStrip && (
           <div style={{ height: thumbHeight, overflow: 'hidden', borderBottom: VISUALIZATION_DIVIDER }}>
             <ThumbnailStrip
-              thumbnailData={thumbnailData}
-              width={width}
-              height={thumbHeight}
-              clipStart={clip.startTime}
-              clipEnd={clip.startTime + clip.duration}
-              sourceStart={clip.inPoint}
-              sourceEnd={clip.outPoint}
+              thumbnailData={thumbnailData} width={width} height={thumbHeight}
+              clipStart={clip.startTime} clipEnd={clip.startTime + clip.duration}
+              sourceStart={clip.inPoint} sourceEnd={clip.outPoint}
             />
           </div>
         )}
         {showWave && (
           <div style={{ height: waveHeight, overflow: 'hidden' }}>
             <WaveformView
-              waveformData={waveformData}
-              width={width}
-              height={waveHeight}
-              clipStart={clip.startTime}
-              clipEnd={clip.startTime + clip.duration}
-              sourceStart={clip.inPoint}
-              sourceEnd={clip.outPoint}
+              waveformData={waveformData} width={width} height={waveHeight}
+              clipStart={clip.startTime} clipEnd={clip.startTime + clip.duration}
+              sourceStart={clip.inPoint} sourceEnd={clip.outPoint}
             />
           </div>
         )}
       </div>
 
-      {/* T-3.6: 속도 뱃지 */}
+      {/* ★ E-6a: 키프레임 다이아몬드 오버레이 */}
+      {showKfDiamonds && (
+        <KeyframeDiamonds
+          clip={clip}
+          pps={pps}
+          clipWidthPx={width}
+          maxHeight={KF_AREA_MAX_HEIGHT}
+        />
+      )}
+
+      {/* 속도 뱃지 */}
       {clip.speed !== 1 && (
-        <div style={{
-          ...badgeBase,
-          bottom: 2,
-          left: 4,
-          color: '#ffd700',
-        }}>
+        <div style={{ ...badgeBase, bottom: showKfDiamonds ? KF_AREA_MAX_HEIGHT + 2 : 2, left: 4, color: '#ffd700' }}>
           {clip.speed}x{clip.reverse ? '⏪' : ''}
         </div>
       )}
 
-      {/* T-3.2: 블렌드 모드 뱃지 */}
+      {/* 블렌드 모드 뱃지 */}
       {clip.blendMode !== 'normal' && (
-        <div style={{
-          ...badgeBase,
-          bottom: 2,
-          right: HANDLE_WIDTH + 4,
-          color: '#da70d6',
-        }}>
+        <div style={{ ...badgeBase, bottom: showKfDiamonds ? KF_AREA_MAX_HEIGHT + 2 : 2, right: HANDLE_WIDTH + 4, color: '#da70d6' }}>
           {clip.blendMode}
         </div>
       )}
 
-      {/* ★ NEW: 효과 뱃지 */}
+      {/* 효과 뱃지 */}
       {filterCount > 0 && (
-        <div style={{
-          ...badgeBase,
-          top: 2,
-          right: HANDLE_WIDTH + (clip.groupId ? 24 : 4),
-          color: '#00d2ff',
-        }}>
+        <div style={{ ...badgeBase, top: 2, right: HANDLE_WIDTH + (clip.groupId ? 24 : 4), color: '#00d2ff' }}>
           ✨{filterCount} FX
         </div>
       )}
 
-      {/* ★ NEW: 키프레임 뱃지 */}
-      {kfCount > 0 && (
+      {/* 키프레임 뱃지 (다이아몬드가 안 보일 때만 표시) */}
+      {kfCount > 0 && !showKfDiamonds && (
         <div style={{
           ...badgeBase,
           bottom: clip.speed !== 1 ? 14 : 2,
@@ -221,19 +184,12 @@ export function ClipBlock({
         </div>
       )}
 
-      {/* T-3.3: 그룹 인디케이터 */}
+      {/* 그룹 인디케이터 */}
       {clip.groupId && (
         <div style={{
-          position: 'absolute',
-          top: 2,
-          right: HANDLE_WIDTH + 4,
-          fontSize: 9,
-          opacity: 0.6,
-          pointerEvents: 'none',
-          zIndex: 3,
-        }}>
-          📦
-        </div>
+          position: 'absolute', top: 2, right: HANDLE_WIDTH + 4,
+          fontSize: 9, opacity: 0.6, pointerEvents: 'none', zIndex: 3,
+        }}>📦</div>
       )}
 
       {/* Name */}
@@ -242,14 +198,10 @@ export function ClipBlock({
       </span>
 
       {/* Trim Handles */}
-      <div
-        style={{ ...handleBase, left: 0 }}
-        onMouseDown={(e) => { e.stopPropagation(); onTrimLeftStart(e); }}
-      />
-      <div
-        style={{ ...handleBase, right: 0 }}
-        onMouseDown={(e) => { e.stopPropagation(); onTrimRightStart(e); }}
-      />
+      <div style={{ ...handleBase, left: 0 }}
+        onMouseDown={(e) => { e.stopPropagation(); onTrimLeftStart(e); }} />
+      <div style={{ ...handleBase, right: 0 }}
+        onMouseDown={(e) => { e.stopPropagation(); onTrimRightStart(e); }} />
     </div>
   );
 }
