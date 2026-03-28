@@ -1,4 +1,5 @@
 /* ─── src/types/project.ts ─── */
+import type { TextContent } from './textClip';
 
 /* ========== 기본 인터페이스 ========== */
 export interface Transform {
@@ -45,6 +46,7 @@ export interface Filter {
   params: Record<string, number | string | boolean>;
 }
 
+
 export interface Clip {
   id: string;
   assetId: string;
@@ -68,6 +70,9 @@ export interface Clip {
   
   /* Step 3: 키프레임 애니메이션 */
   keyframeTracks?: KeyframeTrack[];
+
+  /** ★ B4: 텍스트 클립 콘텐츠 (text 트랙 전용) */
+  textContent?: TextContent;
 }
 
 export type TrackHeightPreset = 'S' | 'M' | 'L' | 'XL' | 'custom';

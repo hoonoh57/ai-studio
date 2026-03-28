@@ -4,6 +4,7 @@ import { isVideoReady } from '@/engines/canvasRenderer';
 import { effectRegistry } from '@/engines/effectRegistry';
 import { audioEngine } from '@/engines/audioEngine';
 import type { Clip, KeyframeTrack } from '@/types/project';
+import type { TextContent, TextStyle, TextAnimation } from '@/types/textClip';
 
 const CANVAS_BG = '#000000';
 const PRELOAD_AHEAD = 0.5;
@@ -133,7 +134,7 @@ export function PreviewArea() {
   function findClipAt(time: number): Clip | null {
     const state = useEditorStore.getState();
     for (const track of state.project.tracks) {
-      if (!track.clips || track.type === 'audio') continue; // 오디오 트랙 제외
+      if (!track.clips || track.type === 'audio' || track.type === 'text') continue; // 오디오/텍스트 트랙 제외
       for (const clip of track.clips) {
         if (clip.disabled) continue; // ★ B2-5
         if (time >= clip.startTime && time < clip.startTime + clip.duration) return clip;
@@ -529,6 +530,163 @@ export function PreviewArea() {
           } else if (isVideoReady(videoB) && loadedB.current.clipId === clip.id) {
             ctx.clearRect(0, 0, w, h);
             drawClipWithKeyframes(videoB, ctx, w, h, clip, relTime);
+            didDraw = true;
+          }
+        }
+      }
+
+      // ══════ B4: 텍스트 오버레이 렌더링 ══════
+      {
+        const textTracks = state.project.tracks.filter(
+          t => t.type === 'text' && t.visible && !t.muted
+        );
+        for (const textTrack of textTracks) {
+          for (const tClip of textTrack.clips) {
+            if (tClip.disabled) continue;
+            if (!tClip.textContent) continue;
+            if (time < tClip.startTime || time >= tClip.startTime + tClip.duration) continue;
+
+            const tc = tClip.textContent;
+            const st = tc.style;
+            const relTime = time - tClip.startTime;
+            const clipDur = tClip.duration;
+
+            // ── 애니메이션 계산 ──
+            const animDur = st.animationDuration || 0.3;
+            let animProgress = 1; // 1 = 완전히 보임
+            let animOpacity = 1;
+            let animOffsetX = 0;
+            let animOffsetY = 0;
+            let animScale = 1;
+            let animRotation = 0;
+            let animBlur = 0;
+            let typewriterLen = tc.text.length;
+
+            const entryT = Math.min(1, relTime / animDur);
+            const exitT = Math.min(1, (clipDur - relTime) / animDur);
+
+            // B4: 애니메이션 유형별 속성 계산
+            switch (st.animation) {
+              case 'fade-in': animOpacity = entryT; break;
+              case 'fade-out': animOpacity = exitT; break;
+              case 'typewriter': typewriterLen = Math.floor(tc.text.length * entryT); break;
+              case 'slide-up': animOffsetY = (1 - entryT) * 40; animOpacity = entryT; break;
+              case 'slide-down': animOffsetY = -(1 - entryT) * 40; animOpacity = entryT; break;
+              case 'slide-left': animOffsetX = (1 - entryT) * 60; animOpacity = entryT; break;
+              case 'slide-right': animOffsetX = -(1 - entryT) * 60; animOpacity = entryT; break;
+              case 'scale-in': animScale = 0.3 + 0.7 * entryT; animOpacity = entryT; break;
+              case 'bounce-in': {
+                const bt = entryT;
+                animScale = bt < 0.5 ? 0.3 + 1.4 * bt : 1.0 + 0.15 * Math.sin((bt - 0.5) * Math.PI * 4) * (1 - bt);
+                animOpacity = Math.min(1, bt * 2);
+                break;
+              }
+              case 'blur-in': animBlur = (1 - entryT) * 10; animOpacity = entryT; break;
+              case 'rotate-in': animRotation = (1 - entryT) * -15; animScale = 0.5 + 0.5 * entryT; animOpacity = entryT; break;
+              case 'glitch-in': {
+                const gt = entryT;
+                if (gt < 1) {
+                  animOffsetX = (Math.random() - 0.5) * 10 * (1 - gt);
+                  animOffsetY = (Math.random() - 0.5) * 6 * (1 - gt);
+                }
+                animOpacity = gt < 0.3 ? (Math.random() > 0.5 ? 1 : 0.3) : 1;
+                break;
+              }
+              default: break;
+            }
+
+            // ── Canvas 텍스트 렌더링 ──
+            ctx.save();
+            ctx.globalAlpha = Math.max(0, Math.min(1, animOpacity));
+            if (animBlur > 0) ctx.filter = `blur(${animBlur}px)`;
+
+            const fontStr = `${st.fontStyle} ${st.fontWeight} ${st.fontSize * (w / 1920)}px ${st.fontFamily}`;
+            ctx.font = fontStr;
+            ctx.textAlign = st.textAlign;
+            ctx.textBaseline = 'top';
+
+            const posX = (st.positionX / 100) * w + animOffsetX;
+            const posY = (st.positionY / 100) * h + animOffsetY;
+
+            if (animScale !== 1 || animRotation !== 0) {
+              ctx.translate(posX, posY);
+              if (animRotation !== 0) ctx.rotate((animRotation * Math.PI) / 180);
+              if (animScale !== 1) ctx.scale(animScale, animScale);
+              ctx.translate(-posX, -posY);
+            }
+
+            const displayText = st.animation === 'typewriter' ? tc.text.substring(0, typewriterLen) : tc.text;
+            const lines = displayText.split('\n');
+            const lineHeight = st.fontSize * (w / 1920) * 1.3;
+            const totalHeight = lines.length * lineHeight;
+
+            let baseY = posY;
+            if (st.verticalAlign === 'middle') baseY = posY - totalHeight / 2;
+            else if (st.verticalAlign === 'bottom') baseY = posY - totalHeight;
+
+            // ── B4-7: 워드별 하이라이트 ──
+            if (tc.wordTimings && tc.wordTimings.length > 0 && lines.length === 1) {
+              const hlColor = st.highlightColor || '#FFFF00';
+              const hlScale = st.highlightScale || 1.2;
+              let cursorX = posX;
+              const fullWidth = ctx.measureText(displayText).width;
+              if (st.textAlign === 'center') cursorX -= fullWidth / 2;
+              else if (st.textAlign === 'right') cursorX -= fullWidth;
+
+              for (const wt of tc.wordTimings) {
+                const isActive = relTime >= wt.startTime && relTime < wt.endTime;
+                const wordText = wt.word + ' ';
+                const wordW = ctx.measureText(wordText).width;
+
+                ctx.save();
+                if (isActive) {
+                  ctx.fillStyle = hlColor;
+                  const sc = hlScale;
+                  const cx = cursorX + wordW / 2;
+                  const cy = baseY + lineHeight / 2;
+                  ctx.translate(cx, cy);
+                  ctx.scale(sc, sc);
+                  ctx.translate(-cx, -cy);
+                } else {
+                  ctx.fillStyle = st.color;
+                }
+                ctx.shadowColor = st.shadowColor; ctx.shadowBlur = st.shadowBlur;
+                ctx.shadowOffsetX = st.shadowOffsetX; ctx.shadowOffsetY = st.shadowOffsetY;
+                if (st.strokeWidth > 0) {
+                  ctx.strokeStyle = st.strokeColor;
+                  ctx.lineWidth = st.strokeWidth * (isActive ? hlScale : 1);
+                  ctx.lineJoin = 'round'; ctx.strokeText(wordText, cursorX, baseY);
+                }
+                ctx.fillText(wordText, cursorX, baseY);
+                ctx.restore();
+                cursorX += wordW;
+              }
+            } else {
+              // ── 일반 렌더링 (멀티라인) ──
+              for (let li = 0; li < lines.length; li++) {
+                const lineY = baseY + li * lineHeight;
+                const lineText = lines[li];
+                if (st.backgroundColor !== 'transparent') {
+                  const metrics = ctx.measureText(lineText);
+                  const boxPad = 6;
+                  let boxX = posX - boxPad;
+                  const boxW = metrics.width + boxPad * 2;
+                  if (st.textAlign === 'center') boxX = posX - boxW / 2;
+                  else if (st.textAlign === 'right') boxX = posX - boxW + boxPad;
+                  ctx.fillStyle = st.backgroundColor;
+                  ctx.fillRect(boxX, lineY - 2, boxW, lineHeight + 4);
+                }
+                ctx.shadowColor = st.shadowColor; ctx.shadowBlur = st.shadowBlur;
+                ctx.shadowOffsetX = st.shadowOffsetX; ctx.shadowOffsetY = st.shadowOffsetY;
+                if (st.strokeWidth > 0) {
+                  ctx.strokeStyle = st.strokeColor; ctx.lineWidth = st.strokeWidth;
+                  ctx.lineJoin = 'round'; ctx.strokeText(lineText, posX, lineY);
+                }
+                ctx.fillStyle = st.color; ctx.fillText(lineText, posX, lineY);
+                ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+              }
+            }
+            ctx.restore();
             didDraw = true;
           }
         }

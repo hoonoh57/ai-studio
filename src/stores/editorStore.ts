@@ -10,6 +10,9 @@ import {
 } from '@/types/project';
 import type { EffectInstance, EffectKeyframe } from '@/types/effect';
 import { createMediaSlice, MEDIA_INITIAL_STATE, MediaSlice } from './mediaSlice';
+import type { TextContent, TextStyle } from '@/types/textClip';
+import { DEFAULT_TEXT_STYLE } from '@/types/textClip';
+import type { SrtEntry } from '@/lib/core/srtParser';
 
 /* UID 유틸 */
 let _uid = Date.now();
@@ -182,6 +185,14 @@ export interface EditorState {
   isHubOpen: boolean;
   setHubOpen: (open: boolean) => void;
 
+  /* ═══ B4: 텍스트/자막 ═══ */
+  addTextClip: (trackId: string | null, text: string, startTime: number,
+                duration?: number, stylePatch?: Partial<TextStyle>) => void;
+  updateTextContent: (clipId: string, text: string) => void;
+  updateTextStyle: (clipId: string, stylePatch: Partial<TextStyle>) => void;
+  importSrt: (entries: SrtEntry[]) => void;
+  exportSrt: () => SrtEntry[];
+  applyStyleToAllTextClips: (stylePatch: Partial<TextStyle>) => void;
   /* Undo/Redo */
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
@@ -907,19 +918,204 @@ export const useEditorStore = create<StoreType>((set, get) => ({
       disabled: false,
     };
 
+    const newFrame: Clip = {
+      ...JSON.parse(JSON.stringify(targetClip)),
+      id: uid('clip'),
+      startTime: time,
+      duration,
+      inPoint: time - targetClip.startTime,
+      outPoint: time - targetClip.startTime,
+      speed: 0, // static frame (hypothetical engine support)
+    };
+
     set((st) => ({
       project: {
         ...st.project,
         tracks: st.project.tracks.map(t =>
-          (t.id === targetTrack!.id ? { ...t, clips: [...t.clips, freezeClip] } : t)),
+          (t.id === targetTrack!.id ? { ...t, clips: [...t.clips, newFrame] } : t)),
       },
     }));
     get().recalcDuration();
   },
 
-  /* B2-8: 셔틀 속도 */
   shuttleSpeed: 0,
   setShuttleSpeed: (speed) => set({ shuttleSpeed: speed }),
+
+  /* ═══ B4: 텍스트/자막 ═══ */
+
+  addTextClip: (trackId, text, startTime, duration = 3, stylePatch) => {
+    const s = get();
+    const style: TextStyle = { ...DEFAULT_TEXT_STYLE, ...stylePatch };
+
+    // 텍스트 트랙 찾기 또는 생성
+    let textTrackId = trackId;
+    if (!textTrackId) {
+      const existing = s.project.tracks.find(t => t.type === 'text' && !t.locked);
+      if (existing) {
+        textTrackId = existing.id;
+      } else {
+        const newTrack = s.addTrack('text', 'Text 1');
+        textTrackId = newTrack.id;
+      }
+    }
+
+    const clipId = uid('clip');
+    const clip: Clip = {
+      id: clipId,
+      assetId: '',          // 텍스트 클립은 에셋 없음
+      startTime,
+      duration,
+      inPoint: 0,
+      outPoint: duration,
+      transform: { x: 0, y: 0, scale: 1, rotation: 0 },
+      filters: [],
+      blendMode: 'normal',
+      opacity: 1,
+      speed: 1,
+      textContent: { text, style },
+    };
+
+    s.pushUndo('텍스트 클립 추가');
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t =>
+          t.id === textTrackId ? { ...t, clips: [...t.clips, clip] } : t
+        ),
+      },
+    }));
+    get().selectClip(clipId);
+    get().recalcDuration();
+  },
+
+  updateTextContent: (clipId, text) => {
+    const s = get();
+    s.pushUndo('텍스트 내용 수정');
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c => {
+            if (c.id !== clipId || !c.textContent) return c;
+            return { ...c, textContent: { ...c.textContent, text } };
+          }),
+        })),
+      },
+    }));
+  },
+
+  updateTextStyle: (clipId, stylePatch) => {
+    const s = get();
+    s.pushUndo('텍스트 스타일 수정');
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t => ({
+          ...t,
+          clips: t.clips.map(c => {
+            if (c.id !== clipId || !c.textContent) return c;
+            return {
+              ...c,
+              textContent: {
+                ...c.textContent,
+                style: { ...c.textContent.style, ...stylePatch },
+              },
+            };
+          }),
+        })),
+      },
+    }));
+  },
+
+  importSrt: (entries) => {
+    const s = get();
+    // 텍스트 트랙 찾기 또는 생성
+    let textTrack = s.project.tracks.find(t => t.type === 'text' && !t.locked);
+    if (!textTrack) {
+      textTrack = s.addTrack('text', 'Subtitles');
+    }
+    const trackId = textTrack.id;
+
+    s.pushUndo('SRT 가져오기');
+    const newClips: Clip[] = entries.map(entry => ({
+      id: uid('clip'),
+      assetId: '',
+      startTime: entry.startTime,
+      duration: entry.endTime - entry.startTime,
+      inPoint: 0,
+      outPoint: entry.endTime - entry.startTime,
+      transform: { x: 0, y: 0, scale: 1, rotation: 0 },
+      filters: [],
+      blendMode: 'normal' as const,
+      opacity: 1,
+      speed: 1,
+      textContent: {
+        text: entry.text,
+        style: { ...DEFAULT_TEXT_STYLE },
+        wordTimings: entry.words,
+      },
+    }));
+
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t =>
+          t.id === trackId ? { ...t, clips: [...t.clips, ...newClips] } : t
+        ),
+      },
+    }));
+    get().recalcDuration();
+  },
+
+  exportSrt: () => {
+    const s = get();
+    const entries: SrtEntry[] = [];
+    let idx = 1;
+    for (const track of s.project.tracks) {
+      if (track.type !== 'text') continue;
+      const sorted = [...track.clips]
+        .filter(c => c.textContent)
+        .sort((a, b) => a.startTime - b.startTime);
+      for (const clip of sorted) {
+        if (!clip.textContent) continue;
+        entries.push({
+          index: idx++,
+          startTime: clip.startTime,
+          endTime: clip.startTime + clip.duration,
+          text: clip.textContent.text,
+          words: clip.textContent.wordTimings,
+        });
+      }
+    }
+    return entries;
+  },
+
+  applyStyleToAllTextClips: (stylePatch) => {
+    const s = get();
+    s.pushUndo('전체 자막 스타일 변경');
+    set((st) => ({
+      project: {
+        ...st.project,
+        tracks: st.project.tracks.map(t => {
+          if (t.type !== 'text') return t;
+          return {
+            ...t,
+            clips: t.clips.map(c => {
+              if (!c.textContent) return c;
+              return {
+                ...c,
+                textContent: {
+                  ...c.textContent,
+                  style: { ...c.textContent.style, ...stylePatch },
+                },
+              };
+            }),
+          };
+        }),
+      },
+    }));
+  },
 
   updateClip: (clipId, patch) => set((s) => {
     // ★ 링크된 클립에 전파할 속성 필터
