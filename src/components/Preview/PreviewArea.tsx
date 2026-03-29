@@ -846,24 +846,24 @@ export function PreviewArea() {
         }}
         onMouseDown={handleCanvasMouseDown}
       >
+      <div style={{ position: 'relative', flexShrink: 0 }}>
         {/* 레이어 1: WebGPU 캔버스 (비디오 프레임) */}
         <canvas
           ref={gpuCanvasRef}
-          style={{ position: 'absolute', display: engine.isGPU ? 'block' : 'none', background: CANVAS_BG }}
+          style={{ position: engine.isGPU ? 'relative' : 'absolute', display: engine.isGPU ? 'block' : 'none', background: CANVAS_BG }}
         />
 
         {/* 레이어 2: Canvas2D 폴백 (키프레임, 이펙트, 전환, 텍스트) */}
         <canvas
           ref={fallbackCanvasRef}
-          style={{ position: 'absolute', display: engine.isGPU ? 'none' : 'block', background: CANVAS_BG }}
+          style={{ position: engine.isGPU ? 'absolute' : 'relative', display: engine.isGPU ? 'none' : 'block', background: CANVAS_BG }}
         />
 
         {/* 레이어 3: 오버레이 캔버스 (안전구역, 그리드, 가이드, Transform 핸들) */}
         <canvas
           ref={overlayCanvasRef}
-          style={{ position: 'absolute', pointerEvents: 'none' }}
-        />
-
+          style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
+        /></div>
         {/* GPU 없을 때 미표시 — 있으면 좌상단 배지 */}
         {engine.isGPU && (
           <div style={{
