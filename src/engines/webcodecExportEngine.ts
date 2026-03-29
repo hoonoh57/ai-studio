@@ -198,9 +198,151 @@ export async function exportWithWebCodecs(
     return exportSingleClip(videoClips[0], opts, textOverlays, t0);
   }
 
-  /* ── 3. 다중 클립: 각각 변환 후 이어붙이기 ── */
+  /* ── 3. 같은 소스의 다중 클립 → 단일 Conversion + process로 처리 ── */
+  const uniqueAssets = new Set(videoClips.map(vc => vc.asset.id));
+  if (uniqueAssets.size === 1) {
+    onLog(`📎 동일 소스 ${videoClips.length}개 클립 → Conversion API로 통합 처리`);
+    return exportSameSourceMultiClip(videoClips, opts, textOverlays, t0);
+  }
+
+  /* ── 4. 다중 클립: 각각 변환 후 이어붙이기 ── */
   // Mediabunny의 Output에 순차적으로 프레임을 공급
   return exportMultiClip(videoClips, opts, textOverlays, t0);
+}
+
+/**
+ * 같은 소스에서 잘라낸 다중 클립: 
+ * 전체 범위를 Conversion API로 처리하되, 
+ * 클립 사이 구간(갭)은 process에서 검은 화면으로 대체
+ */
+async function exportSameSourceMultiClip(
+  videoClips: { clip: Clip; asset: Asset }[],
+  opts: WebCodecExportOptions,
+  textOverlays: TextOverlay[],
+  t0: number,
+): Promise<Blob> {
+  const { preset, rangeStart, rangeEnd, onProgress, onLog } = opts;
+  const { asset } = videoClips[0];
+  const hasText = textOverlays.length > 0;
+
+  // 클립들의 활성 구간 계산 (타임라인 기준)
+  const activeRanges = videoClips.map(vc => ({
+    start: Math.max(vc.clip.startTime, rangeStart) - rangeStart, // 상대 시간
+    end: Math.min(vc.clip.startTime + vc.clip.duration, rangeEnd) - rangeStart,
+    ss: (vc.clip.inPoint || 0) + (Math.max(vc.clip.startTime, rangeStart) - vc.clip.startTime),
+  }));
+
+  // 소스 파일의 실제 트림 범위 (가장 이른 시작 ~ 가장 늦은 끝)
+  const srcStart = Math.min(...activeRanges.map(r => r.ss));
+  const srcEnd = Math.max(...activeRanges.map((r, i) => {
+    const vc = videoClips[i];
+    const clipStart = Math.max(vc.clip.startTime, rangeStart);
+    const clipEnd = Math.min(vc.clip.startTime + vc.clip.duration, rangeEnd);
+    return (vc.clip.inPoint || 0) + (clipEnd - vc.clip.startTime);
+  }));
+
+  onLog(`소스 트림: ${srcStart.toFixed(2)}s ~ ${srcEnd.toFixed(2)}s`);
+  onLog(`활성 클립 ${activeRanges.length}개`);
+
+  const blob = await fetchAsBlob(asset.src);
+  const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(blob) });
+  const output = new Output({
+    format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
+    target: new BufferTarget(),
+  });
+
+  // 클립 활성 여부 판별 함수 (소스 타임스탬프 기준)
+  function isInActiveClip(srcTimestamp: number): boolean {
+    for (const vc of videoClips) {
+      const clipSrcStart = (vc.clip.inPoint || 0);
+      const clipSrcEnd = clipSrcStart + vc.clip.duration;
+      if (srcTimestamp >= clipSrcStart - 0.02 && srcTimestamp <= clipSrcEnd + 0.02) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  let ctx: OffscreenCanvasRenderingContext2D | null = null;
+
+  const conversionOpts: any = {
+    input,
+    output,
+    trim: { start: srcStart, end: srcEnd },
+    video: {
+      width: preset.width,
+      height: preset.height,
+      fit: 'contain',
+      frameRate: preset.fps,
+      codec: 'avc',
+      bitrate: presetToBitrate(preset),
+      hardwareAcceleration: 'prefer-hardware',
+      process: (sample: VideoSample) => {
+        if (!ctx) {
+          const canvas = new OffscreenCanvas(preset.width, preset.height);
+          ctx = canvas.getContext('2d')!;
+        }
+        ctx.clearRect(0, 0, preset.width, preset.height);
+
+        // 클립 활성 구간이면 프레임 그리기, 아니면 검은 화면
+        if (isInActiveClip(sample.timestamp)) {
+          sample.draw(ctx, 0, 0, preset.width, preset.height);
+        }
+        // else: 검은 화면 유지 (갭 구간)
+
+        // 텍스트 오버레이
+        if (hasText) {
+          // 소스 타임스탬프 → 타임라인 상대 시간 변환
+          const timelineTime = sample.timestamp - srcStart;
+          drawTextOverlays(ctx, textOverlays, timelineTime, preset.width, preset.height);
+        }
+
+        return ctx.canvas;
+      },
+    },
+    audio: {
+      codec: 'aac',
+      bitrate: presetToAudioBitrate(preset),
+    },
+  };
+
+  const conversion: any = await Conversion.init(conversionOpts);
+
+  if (conversion.isValid === false) {
+    const reasons = (conversion.discardedTracks || [])
+      .map((dt: any) => `${dt.track}: ${dt.reason}`)
+      .join(', ');
+    throw new Error(`변환 불가: ${reasons}`);
+  }
+
+  conversion.onProgress = (progress: number) => {
+    const elapsed = performance.now() - t0;
+    const pct = Math.round(10 + progress * 85);
+    const remaining = pct > 5 ? (elapsed / pct) * (100 - pct) : 0;
+    onProgress({
+      phase: 'encoding', percent: pct, elapsedMs: elapsed,
+      estimatedRemainingMs: remaining,
+      message: `인코딩 중… ${pct}% (HW 가속/통합)`,
+    });
+  };
+
+  await conversion.execute();
+
+  const buffer = (output.target as any).buffer!;
+  if (!buffer) throw new Error('출력 버퍼가 비어있습니다.');
+
+  const result = new Blob([buffer], { type: 'video/mp4' });
+  const elapsed = performance.now() - t0;
+  const totalDur = srcEnd - srcStart;
+  const speed = (totalDur / (elapsed / 1000)).toFixed(1);
+  onLog(`✅ 완료: ${(result.size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(elapsed)} (${speed}x 실시간)`);
+  onProgress({
+    phase: 'done', percent: 100, elapsedMs: elapsed,
+    estimatedRemainingMs: 0,
+    message: `✅ 완료! ${(result.size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(elapsed)} (${speed}x)`,
+  });
+
+  return result;
 }
 
 async function exportSingleClip(
