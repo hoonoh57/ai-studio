@@ -230,7 +230,7 @@ async function exportSingleClip(
 
   // Mediabunny Output
   const output = new Output({
-    format: new Mp4OutputFormat({ fastStart: true }),
+    format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
     target: new BufferTarget(),
   });
 
@@ -249,7 +249,7 @@ async function exportSingleClip(
   // Canvas for text overlay
   let ctx: OffscreenCanvasRenderingContext2D | null = null;
 
-  const conversion = await Conversion.init({
+  const conversion: any = await Conversion.init({
     input,
     output,
     video: {
@@ -275,7 +275,7 @@ async function exportSingleClip(
           return ctx.canvas;
         },
       } : {}),
-    },
+    } as any,
     audio: {
       codec: 'aac',
       bitrate: presetToAudioBitrate(preset),
@@ -286,9 +286,9 @@ async function exportSingleClip(
     },
   });
 
-  if (!conversion.isValid) {
-    const reasons = conversion.discardedTracks
-      .map(dt => `${dt.track}: ${dt.reason}`)
+  if (conversion.isValid === false) {
+    const reasons = (conversion.discardedTracks || [])
+      .map((dt: any) => `${dt.track}: ${dt.reason}`)
       .join(', ');
     throw new Error(`변환 불가: ${reasons}`);
   }
@@ -307,7 +307,7 @@ async function exportSingleClip(
 
   await conversion.execute();
 
-  const buffer = (output.target as BufferTarget).buffer!;
+  const buffer = (output.target as any).buffer!;
   if (!buffer) throw new Error('출력 버퍼가 비어있습니다.');
   
   const result = new Blob([buffer], { type: 'video/mp4' });
@@ -345,7 +345,7 @@ async function exportMultiClip(
   const ctx = canvas.getContext('2d')!;
 
   const output = new MBOutput({
-    format: new MBMp4({ fastStart: true }),
+    format: new MBMp4({ fastStart: 'in-memory' }),
     target: new MBBuffer(),
   });
 
@@ -355,7 +355,7 @@ async function exportMultiClip(
     hardwareAcceleration: 'prefer-hardware',
     width: preset.width,
     height: preset.height,
-  });
+  } as any);
   output.addVideoTrack(videoSource, { frameRate: preset.fps });
 
   await output.start();
@@ -417,7 +417,7 @@ async function exportMultiClip(
 
   await output.finalize();
 
-  const buffer = (output.target as MBBuffer).buffer!;
+  const buffer = (output.target as any).buffer!;
   if (!buffer) throw new Error('출력 버퍼 생성 실패');
   
   const result = new Blob([buffer], { type: 'video/mp4' });
