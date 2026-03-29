@@ -240,19 +240,40 @@ async function exportSingleClip(
   const ss = (clip.inPoint || 0) + (clipStart - clip.startTime);
   const dur = clipEnd - clipStart;
 
+  // ★ 핵심: 소스 해상도/코덱 확인하여 transmux 가능 여부 판단
+  const videoTrack = await input.getPrimaryVideoTrack() as any;
+  const srcW = videoTrack?.displayWidth ?? 0;
+  const srcH = videoTrack?.displayHeight ?? 0;
+  const needsResize = (srcW !== preset.width || srcH !== preset.height);
+  const needsTranscode = hasText || needsResize;
+
+  if (needsTranscode) {
+    onLog(`트랜스코딩 모드: resize=${needsResize}, text=${hasText}`);
+  } else {
+    onLog(`⚡ Transmux 모드: 동일 해상도 (${srcW}x${srcH}), 텍스트 없음 → 미디어 직접 복사`);
+  }
+
   onLog(`트림: ss=${ss.toFixed(2)}s, dur=${dur.toFixed(2)}s`);
   onProgress({
     phase: 'encoding', percent: 10, elapsedMs: performance.now() - t0,
-    estimatedRemainingMs: 0, message: '인코딩 준비 중…',
+    estimatedRemainingMs: 0, message: needsTranscode ? '트랜스코딩 준비…' : 'Transmux 준비…',
   });
 
   // Canvas for text overlay
   let ctx: OffscreenCanvasRenderingContext2D | null = null;
 
-  const conversion: any = await Conversion.init({
+  const conversionOpts: any = {
     input,
     output,
-    video: {
+    trim: { start: ss, end: ss + dur },
+    audio: needsTranscode
+      ? { codec: 'aac', bitrate: presetToAudioBitrate(preset) }
+      : {},  // transmux: 오디오도 직접 복사
+  };
+
+  if (needsTranscode) {
+    // 재인코딩 필요한 경우만 video 옵션 지정
+    conversionOpts.video = {
       width: preset.width,
       height: preset.height,
       fit: 'contain',
@@ -275,16 +296,12 @@ async function exportSingleClip(
           return ctx.canvas;
         },
       } : {}),
-    } as any,
-    audio: {
-      codec: 'aac',
-      bitrate: presetToAudioBitrate(preset),
-    },
-    trim: {
-      start: ss,
-      end: ss + dur,
-    },
-  });
+    };
+  }
+  // needsTranscode === false 이면 video 옵션을 아예 안 줌
+  // → Mediabunny가 자동으로 transmux (직접 복사)
+
+  const conversion: any = await Conversion.init(conversionOpts);
 
   if (conversion.isValid === false) {
     const reasons = (conversion.discardedTracks || [])
@@ -301,7 +318,9 @@ async function exportSingleClip(
     onProgress({
       phase: 'encoding', percent: pct, elapsedMs: elapsed,
       estimatedRemainingMs: remaining,
-      message: `인코딩 중… ${pct}% (HW 가속)`,
+      message: needsTranscode
+        ? `트랜스코딩 중… ${pct}% (HW 가속)`
+        : `Transmux 중… ${pct}% (직접 복사)`,
     });
   };
 
@@ -312,11 +331,13 @@ async function exportSingleClip(
   
   const result = new Blob([buffer], { type: 'video/mp4' });
 
-  onLog(`✅ 완료: ${(result.size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(performance.now() - t0)}`);
+  const elapsed = performance.now() - t0;
+  const speed = (dur / (elapsed / 1000)).toFixed(1);
+  onLog(`✅ 완료: ${(result.size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(elapsed)} (${speed}x 실시간)`);
   onProgress({
-    phase: 'done', percent: 100, elapsedMs: performance.now() - t0,
+    phase: 'done', percent: 100, elapsedMs: elapsed,
     estimatedRemainingMs: 0,
-    message: `✅ 완료! ${(result.size / 1024 / 1024).toFixed(1)} MB`,
+    message: `✅ 완료! ${(result.size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(elapsed)} (${speed}x)`,
   });
 
   return result;
