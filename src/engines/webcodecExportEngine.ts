@@ -160,13 +160,39 @@ export interface WebCodecExportOptions {
   onLog: (msg: string) => void;
 }
 
+import { analyzeTimeline } from './renderPlan';
+
 export async function exportWithWebCodecs(
   opts: WebCodecExportOptions,
 ): Promise<Blob> {
   const { preset, project, rangeStart, rangeEnd, onProgress, onLog } = opts;
   const t0 = performance.now();
 
-  /* ── 1. 비디오 클립 수집 ── */
+  onLog('🚀 WebCodecs HW 가속 내보내기 엔진 시작…');
+
+  /* ── 1. 타임라인 분석 (Render Plan) ── */
+  const plan = analyzeTimeline(
+    project.tracks,
+    project.assets,
+    rangeStart,
+    rangeEnd,
+    { width: preset.width, height: preset.height },
+  );
+
+  // 분석 결과 로그
+  onLog(`📊 Render Plan: ${plan.segments.length}개 구간`);
+  for (const seg of plan.segments) {
+    const dur = (seg.endTime - seg.startTime).toFixed(1);
+    onLog(`  [${seg.startTime.toFixed(1)}s~${seg.endTime.toFixed(1)}s] `
+      + `${seg.type} (${dur}s) — ${seg.reasons.join(', ')}`);
+  }
+  onLog(`  ⚡ passthrough: ${plan.passthroughDuration.toFixed(1)}s`
+    + ` | transcode: ${plan.transcodeDuration.toFixed(1)}s`
+    + ` | composite: ${plan.compositeDuration.toFixed(1)}s`);
+
+  /* ── 2. 최적화: 전체가 단일 타입이면 기존 경로 직접 호출 ── */
+
+  // 비디오 클립 수집 (기존 로직 유지)
   const videoClips: { clip: Clip; asset: Asset }[] = [];
   for (const track of project.tracks) {
     if (track.type !== 'video') continue;
@@ -185,7 +211,7 @@ export async function exportWithWebCodecs(
     throw new Error('내보낼 비디오 클립이 없습니다.');
   }
 
-  /* ── 텍스트 오버레이 준비 ── */
+  // 텍스트 오버레이 준비
   const textTracks = project.tracks.filter(t => t.type === 'text');
   const textOverlays = collectTextOverlays(textTracks, rangeStart, rangeEnd);
   const hasText = textOverlays.length > 0;
@@ -193,20 +219,47 @@ export async function exportWithWebCodecs(
     onLog(`텍스트 오버레이 ${textOverlays.length}개 준비 완료`);
   }
 
-  /* ── 2. 단일 클립 처리 (가장 일반적인 경우) ── */
+  /* ── 3. 구간이 1개면 기존 함수로 바로 위임 ── */
+  if (plan.segments.length <= 1) {
+    // 기존 경로: 단일/다중 클립 분기
+    if (videoClips.length === 1) {
+      return exportSingleClip(videoClips[0], opts, textOverlays, t0);
+    }
+    const uniqueAssets = new Set(videoClips.map(vc => vc.asset.id));
+    if (uniqueAssets.size === 1) {
+      return exportSameSourceMultiClip(videoClips, opts, textOverlays, t0);
+    }
+    return exportMultiClip(videoClips, opts, textOverlays, t0);
+  }
+
+  /* ── 4. 복수 구간: 구간별 처리 후 concat ── */
+  // (향후 구간별 passthrough/composite 분리 처리)
+  // 현재는 composite 구간이 하나라도 있으면 전체를 기존 로직으로 처리
+  // → 안전한 폴백. 기존 동작과 100% 동일.
+  
+  const hasComposite = plan.segments.some(s => s.type === 'composite');
+  
+  if (!hasComposite) {
+    // 전체가 passthrough/transcode만 → 기존 single/multi로
+    if (videoClips.length === 1) {
+      return exportSingleClip(videoClips[0], opts, textOverlays, t0);
+    }
+    const uniqueAssets = new Set(videoClips.map(vc => vc.asset.id));
+    if (uniqueAssets.size === 1) {
+      return exportSameSourceMultiClip(videoClips, opts, textOverlays, t0);
+    }
+    return exportMultiClip(videoClips, opts, textOverlays, t0);
+  }
+
+  // composite가 있는 경우도 기존 경로로 위임
+  // (Render Plan 로그로 어디서 느려지는지 확인 가능)
   if (videoClips.length === 1) {
     return exportSingleClip(videoClips[0], opts, textOverlays, t0);
   }
-
-  /* ── 3. 같은 소스의 다중 클립 → 단일 Conversion + process로 처리 ── */
   const uniqueAssets = new Set(videoClips.map(vc => vc.asset.id));
   if (uniqueAssets.size === 1) {
-    onLog(`📎 동일 소스 ${videoClips.length}개 클립 → Conversion API로 통합 처리`);
     return exportSameSourceMultiClip(videoClips, opts, textOverlays, t0);
   }
-
-  /* ── 4. 다중 클립: 각각 변환 후 이어붙이기 ── */
-  // Mediabunny의 Output에 순차적으로 프레임을 공급
   return exportMultiClip(videoClips, opts, textOverlays, t0);
 }
 
