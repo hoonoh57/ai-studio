@@ -97,6 +97,41 @@ function fmtSize(bytes: number): string {
 }
 
 /**
+ * CSS 컬러(rgba/rgb/hex/named) → FFmpeg-safe hex 변환
+ * rgba(0,0,0,0.5) → #00000080  (쉼표 제거하여 drawtext 파서 충돌 방지)
+ * rgb(255,0,0)     → #FF0000
+ * #FF0000          → #FF0000 (그대로)
+ * black@0.8        → black@0.8 (FFmpeg 네이티브 — 그대로)
+ */
+function safeColor(color: string | undefined, fallback: string): string {
+  if (!color) return fallback;
+
+  // rgba(R, G, B, A)
+  const rgbaMatch = color.match(
+    /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/i
+  );
+  if (rgbaMatch) {
+    const r = parseInt(rgbaMatch[1]).toString(16).padStart(2, '0');
+    const g = parseInt(rgbaMatch[2]).toString(16).padStart(2, '0');
+    const b = parseInt(rgbaMatch[3]).toString(16).padStart(2, '0');
+    if (rgbaMatch[4] !== undefined) {
+      const a = Math.round(parseFloat(rgbaMatch[4]) * 255)
+        .toString(16)
+        .padStart(2, '0');
+      return `#${r}${g}${b}${a}`.toUpperCase();
+    }
+    return `#${r}${g}${b}`.toUpperCase();
+  }
+
+  // 쉼표가 포함된 다른 형식이 있으면 안전하게 제거
+  if (color.includes(',')) {
+    return fallback;
+  }
+
+  return color;
+}
+
+/**
  * 텍스트 클립 → drawtext 필터 문자열
  */
 function buildTextFilters(
@@ -137,20 +172,22 @@ function buildTextFilters(
       let f = `drawtext=fontfile=${fontFile}`;
       f += `:text='${safeText}'`;
       f += `:fontsize=${fontSize}`;
-      f += `:fontcolor=${st.color}`;
+      f += `:fontcolor=${safeColor(st.color, '#FFFFFF')}`;
       f += `:x=${x}:y=${y}`;
       f += `:enable='between(t\\,${enableStart.toFixed(3)}\\,${enableEnd.toFixed(3)})'`;
 
       if (st.strokeWidth > 0) {
         f += `:borderw=${Math.round(st.strokeWidth * (outH / 1080))}`;
-        f += `:bordercolor=${st.strokeColor}`;
+        f += `:bordercolor=${safeColor(st.strokeColor, '#000000')}`;
       }
       if (st.shadowBlur > 0) {
         f += `:shadowx=${st.shadowOffsetX || 2}:shadowy=${st.shadowOffsetY || 2}`;
-        f += `:shadowcolor=${st.shadowColor || 'black@0.8'}`;
+        f += `:shadowcolor=${safeColor(st.shadowColor, 'black@0.8')}`;
       }
       if (st.backgroundColor && st.backgroundColor !== 'transparent') {
-        f += `:box=1:boxcolor=${st.backgroundColor}@0.6:boxborderw=6`;
+        const boxC = safeColor(st.backgroundColor, 'black');
+        // @ 기호로 투명도 지정 (FFmpeg 네이티브 방식)
+        f += `:box=1:boxcolor=${boxC}@0.6:boxborderw=6`;
       }
 
       parts.push(f);
