@@ -64,6 +64,7 @@ export interface EditorState {
   /* 프로젝트 */
   project: Project;
   setProjectName: (name: string) => void;
+  setProjectResolution: (width: number, height: number) => void;
 
   /* 에셋 */
   addAsset: (asset: Omit<Asset, 'id'> & { id?: string }) => Asset;
@@ -246,6 +247,9 @@ export const useEditorStore = create<StoreType>((set, get) => ({
   /* ──── 프로젝트 ──── */
   project: defaultProject,
   setProjectName: (name) => set((s) => ({ project: { ...s.project, name } })),
+  setProjectResolution: (width, height) => set((s) => ({
+    project: { ...s.project, width, height },
+  })),
 
   /* ──── 에셋 ──── */
   addAsset: (asset) => {

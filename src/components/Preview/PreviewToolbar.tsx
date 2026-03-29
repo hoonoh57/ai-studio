@@ -10,6 +10,8 @@ export interface PreviewToolbarProps {
     duration: number;
     zoom: string;
     playbackRes: string;
+    projectRatio: string;
+    onRatioChange: (ratio: string) => void;
     onTogglePlay: () => void;
     onStepFrame: (dir: number) => void;
     onGoToStart: () => void;
@@ -26,6 +28,15 @@ export interface PreviewToolbarProps {
     tierLabel: string;
     gpuName: string;
 }
+
+const RATIO_OPTIONS = [
+    { label: '16:9', w: 1920, h: 1080 },
+    { label: '9:16', w: 1080, h: 1920 },
+    { label: '1:1', w: 1080, h: 1080 },
+    { label: '4:3', w: 1440, h: 1080 },
+    { label: '3:2', w: 1620, h: 1080 },
+    { label: '21:9', w: 2560, h: 1080 },
+];
 
 const ZOOM_OPTIONS = ['Fit', '25%', '50%', '75%', '100%', '150%', '200%', '400%'];
 const RES_OPTIONS = ['Full', '1/2', '1/4', '1/8'];
@@ -48,6 +59,7 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
     const {
         currentTime, isPlaying, fps, duration,
         zoom, playbackRes,
+        projectRatio, onRatioChange,
         onTogglePlay, onStepFrame, onGoToStart, onGoToEnd, onSetTime,
         onZoomChange, onResChange,
         onToggleSafeZone, onToggleGrid, onToggleFullscreen, onExportFrame,
@@ -129,6 +141,11 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
 
             {/* 구분선 */}
             <div style={{ width: 1, height: 20, background: '#333', margin: '0 4px' }} />
+
+            {/* 비율 */}
+            <select style={sel} value={projectRatio} onChange={(e) => onRatioChange(e.target.value)} title="프로젝트 비율">
+                {RATIO_OPTIONS.map(r => <option key={r.label} value={r.label}>{r.label}</option>)}
+            </select>
 
             {/* 줌 */}
             <select style={sel} value={zoom} onChange={(e) => onZoomChange(e.target.value)} title="줌">
