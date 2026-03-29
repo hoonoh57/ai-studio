@@ -403,7 +403,7 @@ export function ExportPanel(): React.ReactElement {
 
       await eng.cleanup(filesToClean);
 
-      const blob = new Blob([outputData], { type: `video/${preset.format}` });
+      const blob = new Blob([outputData as any], { type: `video/${preset.format}` });
       const url = URL.createObjectURL(blob);
       setResultUrl(url);
       setResultSize(blob.size);
@@ -449,9 +449,10 @@ export function ExportPanel(): React.ReactElement {
       <div style={S.title}>📤 내보내기 (v3.1)</div>
 
       {!isCrossOriginIsolated && (
-        <div style={S.warn}>
-          ⚠️ Cross-Origin Isolation 비활성.
-          Vite 서버 재시작 필요. (vite.config.ts COOP/COEP 확인)
+        <div style={{ ...S.warn, background: '#1a2233', borderColor: '#334466', color: '#88aadd' }}>
+          ℹ️ Cross-Origin Isolation: 비활성.
+          싱글 스레드 모드로 동작합니다 (정상).
+          멀티스레드가 필요하면 Ctrl+Shift+R로 강력 새로고침하세요.
         </div>
       )}
 
