@@ -316,6 +316,10 @@ export function ExportPanel(): React.ReactElement {
     setExporting(false);
   }, [engineType, webCodecsAvailable, isPlaying, togglePlay, useInOut, inOut, project, preset, exportWithFfmpeg, log]);
 
+  const displayRangeStart = useInOut && inOut.inPoint != null ? inOut.inPoint : 0;
+  const displayRangeEnd = useInOut && inOut.outPoint != null ? inOut.outPoint : project.duration;
+  // const displayRangeDur = displayRangeEnd - displayRangeStart; // Not used yet but available if needed
+
   return (
     <div style={S.root}>
       <div style={S.title}>📤 내보내기 (v4.0 WebCodecs)</div>
@@ -351,7 +355,7 @@ export function ExportPanel(): React.ReactElement {
       <div style={S.divider} />
       <div style={{ ...S.row, marginBottom: 4 }}>
         <input type="checkbox" style={S.checkbox} checked={useInOut} onChange={e => setUseInOut(e.target.checked)} id="exp-io" />
-        <label htmlFor="exp-io" style={{ fontSize: 11, cursor: 'pointer' }}>In/Out 범위만 내보내기 ({rangeStart.toFixed(1)}s~{rangeEnd.toFixed(1)}s)</label>
+        <label htmlFor="exp-io" style={{ fontSize: 11, cursor: 'pointer' }}>In/Out 범위만 내보내기 ({displayRangeStart.toFixed(1)}s~{displayRangeEnd.toFixed(1)}s)</label>
       </div>
 
       {!exporting ? (
