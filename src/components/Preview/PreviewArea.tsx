@@ -1,6 +1,6 @@
-/* ─── src/components/Preview/PreviewArea.tsx ─── */
-/* WebGPU 프리뷰 엔진 통합 — Phase 1 완전 교체 */
-/* 기존 기능 100% 보존 + WebGPU 가속 + 오버레이 + 새 툴바 */
+/* ?�?�?� src/components/Preview/PreviewArea.tsx ?�?�?� */
+/* WebGPU ?�리�??�진 ?�합 ??Phase 1 ?�전 교체 */
+/* 기존 기능 100% 보존 + WebGPU 가??+ ?�버?�이 + ???�바 */
 
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
@@ -17,9 +17,15 @@ const CANVAS_BG = '#000000';
 const PRELOAD_AHEAD = 0.5;
 const DEBUG_KF = false;
 
-/* ═══════════════════════════════════════════════
-   이징 함수 (기존 그대로 유지)
-   ═══════════════════════════════════════════════ */
+/* ?�═??�?�???배율 변???�═??*/
+function zoomToScale(zoom: string): number | null {
+  if (zoom === 'Fit') return null;
+  const n = parseInt(zoom.replace('%', ''), 10);
+  return isNaN(n) ? null : n / 100;
+}
+
+/* ?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═??   ?�징 ?�수 (기존 그�?�??��?)
+   ?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═??*/
 function applyEasing(t: number, easing: string): number {
   const c = Math.max(0, Math.min(1, t));
   switch (easing) {
@@ -53,7 +59,7 @@ function applyEasing(t: number, easing: string): number {
   }
 }
 
-/* ═══ 키프레임 보간 (기존 그대로) ═══ */
+/* ?�═???�프?�임 보간 (기존 그�?�? ?�═??*/
 function interpolateKfValue(
   kfTracks: KeyframeTrack[] | undefined,
   property: string,
@@ -86,11 +92,10 @@ function hasKfProperty(kfTracks: KeyframeTrack[] | undefined, property: string):
   return kfTracks.some(t => t.property === property && t.enabled && t.keyframes.length > 0);
 }
 
-/* ═══════════════════════════════════════════════
-   PreviewArea 컴포넌트 — 완전 통합 버전
-   ═══════════════════════════════════════════════ */
+/* ?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═??   PreviewArea 컴포?�트 ???�전 ?�합 버전
+   ?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═??*/
 export function PreviewArea() {
-  /* ── refs ── */
+  /* ?�?� refs ?�?� */
   const containerRef = useRef<HTMLDivElement>(null);
   const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
   const fallbackCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -103,10 +108,10 @@ export function PreviewArea() {
   const lastFrameData = useRef<ImageData | null>(null);
   const lastDebugLog = useRef<number>(0);
 
-  /* ── WebGPU 엔진 훅 ── */
+  /* ?�?� WebGPU ?�진 ???�?� */
   const engine = usePreviewEngine(gpuCanvasRef, overlayCanvasRef);
 
-  /* ── 스토어 ── */
+  /* ?�?� ?�토???�?� */
   const currentTime = useEditorStore(s => s.currentTime);
   const setCurrentTime = useEditorStore(s => s.setCurrentTime);
   const isPlaying = useEditorStore(s => s.isPlaying);
@@ -121,38 +126,38 @@ export function PreviewArea() {
   const projW = project?.width ?? 1920;
   const projH = project?.height ?? 1080;
 
-  /* ── 툴바 상태 ── */
+  /* ?�?� ?�바 ?�태 ?�?� */
   const [previewZoom, setPreviewZoom] = useState('Fit');
   const [playbackRes, setPlaybackRes] = useState('Full');
   const [safeZoneVisible, setSafeZoneVisible] = useState(false);
   const [gridVisible, setGridVisible] = useState(false);
 
-  /* ── 텍스트 드래그 ── */
+  /* ?�?� ?�스???�래�??�?� */
   const textDragRef = useRef<{
     clipId: string;
     startMouseX: number; startMouseY: number;
     startPosX: number; startPosY: number;
   } | null>(null);
 
-  /* ── 오디오 엔진 초기화 ── */
+  /* ?�?� ?�디???�진 초기???�?� */
   useEffect(() => { audioEngine.init(); }, []);
 
   const handleUserGesture = useCallback(() => { audioEngine.resume(); }, []);
 
-  /* ── 에셋 오디오 버퍼 사전 로딩 ── */
+  /* ?�?� ?�셋 ?�디??버퍼 ?�전 로딩 ?�?� */
   useEffect(() => {
     for (const asset of assets) {
       if (asset.hasAudio || asset.type === 'audio') {
         if (!audioEngine.getBuffer(asset.id)) {
           audioEngine.loadBuffer(asset.id, asset.src).catch(() => {
-            console.warn(`[AudioEngine] 버퍼 로드 실패: ${asset.name}`);
+            console.warn(`[AudioEngine] 버퍼 로드 ?�패: ${asset.name}`);
           });
         }
       }
     }
   }, [assets]);
 
-  /* ═══ 헬퍼 함수 (기존 그대로) ═══ */
+  /* ?�═???�퍼 ?�수 (기존 그�?�? ?�═??*/
   function findClipAt(time: number): Clip | null {
     const state = useEditorStore.getState();
     for (const track of state.project.tracks) {
@@ -235,7 +240,7 @@ export function PreviewArea() {
     }
   }
 
-  /* ═══ 키프레임 기반 drawClip (기존 그대로) ═══ */
+  /* ?�═???�프?�임 기반 drawClip (기존 그�?�? ?�═??*/
   function drawClipWithKeyframes(
     source: CanvasImageSource,
     ctx: CanvasRenderingContext2D,
@@ -308,7 +313,7 @@ export function PreviewArea() {
     ctx.restore();
   }
 
-  /* ═══ 텍스트 드래그 ═══ */
+  /* ?�═???�스???�래�??�═??*/
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const canvas = fallbackCanvasRef.current || gpuCanvasRef.current;
     if (!canvas) return;
@@ -335,9 +340,6 @@ export function PreviewArea() {
         }
       }
     }
-  }, [selectClip]);
-
-  useEffect(() => {
     const onMove = (e: MouseEvent) => {
       const d = textDragRef.current;
       const canvas = fallbackCanvasRef.current || gpuCanvasRef.current;
@@ -355,7 +357,7 @@ export function PreviewArea() {
     return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
   }, [updateTextStyle]);
 
-  /* ═══ 캔버스 크기 동기화 ═══ */
+  /* ?�═??캔버???�기 ?�기????�?반영 ?�═??*/
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -363,20 +365,31 @@ export function PreviewArea() {
       const cw = container.clientWidth;
       const ch = container.clientHeight;
       if (cw === 0 || ch === 0) return;
-      const projAspect = projW / projH;
-      const contAspect = cw / ch;
-      let dw: number, dh: number;
-      if (contAspect > projAspect) { dh = ch; dw = ch * projAspect; }
-      else { dw = cw; dh = cw / projAspect; }
-      const w = Math.floor(dw);
-      const h = Math.floor(dh);
 
-      // 모든 캔버스 레이어 크기 동기화
-      [gpuCanvasRef.current, fallbackCanvasRef.current, overlayCanvasRef.current].forEach(c => {
+      const projAspect = projW / projH;
+      const zScale = zoomToScale(previewZoom);
+
+      let displayW: number, displayH: number;
+
+      if (zScale === null) {
+        /* Fit 모드: 컨테?�너??맞춤 */
+        const contAspect = cw / ch;
+        if (contAspect > projAspect) { displayH = ch; displayW = ch * projAspect; }
+        else { displayW = cw; displayH = cw / projAspect; }
+      } else {
+        /* 고정 �? ?�로?�트 ?�상??× �?배율 */
+        displayW = projW * zScale;
+        displayH = projH * zScale;
+      }
+
+      const w = Math.floor(displayW);
+      const h = Math.floor(displayH);
+
+      // 모든 캔버???�이???�기 ?�기??      [gpuCanvasRef.current, fallbackCanvasRef.current, overlayCanvasRef.current].forEach(c => {
         if (c) {
           c.style.width = `${w}px`;
           c.style.height = `${h}px`;
-          // overlay와 fallback은 논리 크기도 설정
+          // overlay?� fallback?� ?�리 ?�기???�정
           if (c !== gpuCanvasRef.current) {
             c.width = w;
             c.height = h;
@@ -384,7 +397,7 @@ export function PreviewArea() {
         }
       });
 
-      // WebGPU 캔버스 논리 크기
+      // WebGPU 캔버???�리 ?�기
       if (gpuCanvasRef.current) {
         gpuCanvasRef.current.width = w;
         gpuCanvasRef.current.height = h;
@@ -394,9 +407,9 @@ export function PreviewArea() {
     ro.observe(container);
     updateSize();
     return () => ro.disconnect();
-  }, [projW, projH]);
+  }, [projW, projH, previewZoom]);
 
-  /* ═══ 재생 루프 ═══ */
+  /* ?�═???�생 루프 ?�═??*/
   useEffect(() => {
     if (!isPlaying) {
       cancelAnimationFrame(playAnimRef.current);
@@ -435,7 +448,7 @@ export function PreviewArea() {
     return () => cancelAnimationFrame(playAnimRef.current);
   }, [isPlaying, setCurrentTime]);
 
-  /* ═══ 메인 렌더 루프 — WebGPU 우선, Canvas2D 폴백 ═══ */
+  /* ?�═??메인 ?�더 루프 ??WebGPU ?�선, Canvas2D ?�백 ?�═??*/
   useEffect(() => {
     let rafId: number;
 
@@ -448,7 +461,7 @@ export function PreviewArea() {
       const time = state.currentTime;
       const playing = state.isPlaying;
 
-      /* ── WebGPU 경로: 키프레임/이펙트/전환 없는 단순 비디오 재생 ── */
+      /* ?�?� WebGPU 경로: ?�프?�임/?�펙???�환 ?�는 ?�순 비디???�생 ?�?� */
       const clip = findClipAt(time);
       const trans = findTransitionAt(time);
       const hasKeyframes = clip?.keyframeTracks?.some(t => t.enabled && t.keyframes.length > 0);
@@ -456,7 +469,7 @@ export function PreviewArea() {
       const useWebGPU = engine.isWebGPU && engine.compositor && !trans && clip && !hasKeyframes && !hasFilters;
 
       if (useWebGPU && clip) {
-        // WebGPU 캔버스 표시, fallback 숨김
+        // WebGPU 캔버???�시, fallback ?��?
         if (gpuCanvasRef.current) gpuCanvasRef.current.style.display = 'block';
         if (fallbackCanvasRef.current) fallbackCanvasRef.current.style.display = 'none';
 
@@ -469,7 +482,7 @@ export function PreviewArea() {
           engine.compositor!.renderFrame(videoA);
         }
 
-        // 다음 클립 프리로드
+        // ?�음 ?�립 ?�리로드
         const clipEnd = clip.startTime + clip.duration;
         const timeToEnd = clipEnd - time;
         if (timeToEnd <= PRELOAD_AHEAD && timeToEnd > 0) {
@@ -481,7 +494,7 @@ export function PreviewArea() {
         }
 
       } else {
-        /* ── Canvas2D 폴백 경로 (키프레임, 이펙트, 전환, 텍스트 전부 지원) ── */
+        /* ?�?� Canvas2D ?�백 경로 (?�프?�임, ?�펙?? ?�환, ?�스???��? 지?? ?�?� */
         if (gpuCanvasRef.current) gpuCanvasRef.current.style.display = 'none';
         if (fallbackCanvasRef.current) fallbackCanvasRef.current.style.display = 'block';
 
@@ -496,7 +509,7 @@ export function PreviewArea() {
 
         let didDraw = false;
 
-        /* ── 전환 구간 ── */
+        /* ?�?� ?�환 구간 ?�?� */
         if (trans) {
           const srcA = getAssetSrc(trans.clipA.assetId);
           const srcB = getAssetSrc(trans.clipB.assetId);
@@ -546,7 +559,7 @@ export function PreviewArea() {
             ctx.clearRect(0, 0, w, h); ctx.drawImage(videoB, 0, 0, w, h); didDraw = true;
           }
 
-          /* ── 일반 재생 + 키프레임 ── */
+          /* ?�?� ?�반 ?�생 + ?�프?�임 ?�?� */
         } else if (clip) {
           const srcA = getAssetSrc(clip.assetId);
           const localA = time - clip.startTime + (clip.inPoint || 0);
@@ -588,7 +601,7 @@ export function PreviewArea() {
           }
         }
 
-        /* ── 텍스트 오버레이 ── */
+        /* ?�?� ?�스???�버?�이 ?�?� */
         {
           const textTracks = state.project.tracks.filter(t => t.type === 'text' && t.visible && !t.muted);
           for (const textTrack of textTracks) {
@@ -721,7 +734,7 @@ export function PreviewArea() {
           }
         }
 
-        /* 프레임 보존 */
+        /* ?�레??보존 */
         if (didDraw) {
           try { lastFrameData.current = ctx.getImageData(0, 0, w, h); } catch { /* noop */ }
         } else if (lastFrameData.current) {
@@ -738,16 +751,27 @@ export function PreviewArea() {
     return () => cancelAnimationFrame(rafId);
   }, [fps, engine.isWebGPU, engine.compositor]);
 
-  /* ═══ 오버레이 렌더링 ═══ */
+  /* ?�═???�버?�이 ?�더�??�═??*/
   useEffect(() => {
-    if (!engine.overlay || !overlayCanvasRef.current) return;
+    if (!engine.overlay) return;
+
+    /* ?�버?�이가 ????꺼져?�으�?캔버???�리?�만 */
+    if (!safeZoneVisible && !gridVisible) {
+      const c = overlayCanvasRef.current;
+      if (c) {
+        const ctx = c.getContext('2d');
+        ctx?.clearRect(0, 0, c.width, c.height);
+      }
+      return;
+    }
+
     let rafId: number;
     const drawOverlay = () => {
       const canvas = overlayCanvasRef.current;
-      if (!canvas) { rafId = requestAnimationFrame(drawOverlay); return; }
-      const w = canvas.width;
-      const h = canvas.height;
-      if (w === 0 || h === 0) { rafId = requestAnimationFrame(drawOverlay); return; }
+      if (!canvas || canvas.width === 0 || canvas.height === 0) {
+        rafId = requestAnimationFrame(drawOverlay);
+        return;
+      }
 
       engine.overlay!.render(
         {
@@ -763,8 +787,9 @@ export function PreviewArea() {
           verticalGuides: [],
           snapEnabled: false,
         },
-        null, /* transform handles — Phase 2 */
-        w, h,
+        null, /* transform handles ??Phase 2 */
+        canvas.width,
+        canvas.height,
       );
       rafId = requestAnimationFrame(drawOverlay);
     };
@@ -772,7 +797,7 @@ export function PreviewArea() {
     return () => cancelAnimationFrame(rafId);
   }, [engine.overlay, safeZoneVisible, gridVisible]);
 
-  /* ═══ 컨트롤 핸들러 ═══ */
+  /* ?�═??컨트�??�들???�═??*/
   const stepFrame = useCallback((dir: number) => {
     const state = useEditorStore.getState();
     setCurrentTime(Math.max(0, state.currentTime + dir / fps));
@@ -815,44 +840,47 @@ export function PreviewArea() {
     else { el.requestFullscreen().catch(() => { }); }
   }, []);
 
-  /* 프로젝트 duration */
+  /* ?�로?�트 duration */
   let duration = 0;
   for (const track of project.tracks) {
     for (const c of track.clips) duration = Math.max(duration, c.startTime + c.duration);
   }
   if (duration <= 0) duration = project.duration || 60;
 
-  /* ═══ 렌더링 ═══ */
+  /* ?�═???�더�??�═??*/
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0a0a14' }}>
-      {/* 프리뷰 영역 */}
+      {/* ?�리�??�역 */}
       <div
         ref={containerRef}
         style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          overflow: 'hidden', background: CANVAS_BG, position: 'relative', minHeight: 200,
+          overflow: previewZoom === 'Fit' ? 'hidden' : 'auto', background: CANVAS_BG, position: 'relative', minHeight: 200,
         }}
         onMouseDown={handleCanvasMouseDown}
       >
-        {/* 레이어 1: WebGPU 캔버스 (비디오 프레임) */}
-        <canvas
-          ref={gpuCanvasRef}
-          style={{ position: 'absolute', display: engine.isWebGPU ? 'block' : 'none', background: CANVAS_BG }}
-        />
+        {/* 캔버???�퍼 ??3�?캔버?��? ?�확??겹침 */}
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          {/* ?�이??1: WebGPU 캔버??(비디???�레?? */}
+          <canvas
+            ref={gpuCanvasRef}
+            style={{ display: engine.isWebGPU ? 'block' : 'none', background: CANVAS_BG }}
+          />
 
-        {/* 레이어 2: Canvas2D 폴백 (키프레임, 이펙트, 전환, 텍스트) */}
-        <canvas
-          ref={fallbackCanvasRef}
-          style={{ position: 'absolute', display: engine.isWebGPU ? 'none' : 'block', background: CANVAS_BG }}
-        />
+          {/* ?�이??2: Canvas2D ?�백 (?�프?�임, ?�펙?? ?�환, ?�스?? */}
+          <canvas
+            ref={fallbackCanvasRef}
+            style={{ display: engine.isWebGPU ? 'none' : 'block', background: CANVAS_BG }}
+          />
 
-        {/* 레이어 3: 오버레이 캔버스 (안전구역, 그리드, 가이드, Transform 핸들) */}
-        <canvas
-          ref={overlayCanvasRef}
-          style={{ position: 'absolute', pointerEvents: 'none' }}
-        />
+          {/* ?�이??3: ?�버?�이 캔버??(?�전구역, 그리?? 가?�드, Transform ?�들) */}
+          <canvas
+            ref={overlayCanvasRef}
+            style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
+          />
+        </div>
 
-        {/* GPU 없을 때 미표시 — 있으면 좌상단 배지 */}
+        {/* GPU ?�을 ??미표?????�으�?좌상??배�? */}
         {engine.isWebGPU && (
           <div style={{
             position: 'absolute', top: 6, left: 6,
@@ -865,13 +893,13 @@ export function PreviewArea() {
         )}
       </div>
 
-      {/* 숨겨진 비디오 요소 */}
+      {/* ?�겨�?비디???�소 */}
       <video ref={videoARef} muted playsInline preload="auto"
         style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} />
       <video ref={videoBRef} muted playsInline preload="auto"
         style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} />
 
-      {/* 새 툴바 */}
+      {/* ???�바 */}
       <PreviewToolbar
         currentTime={currentTime}
         isPlaying={isPlaying}
