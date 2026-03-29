@@ -1,12 +1,5 @@
 /* ─── src/engines/exportEngine.ts ─── */
-/* B7 v3: 파이썬 aivideostudio 패턴 + 프로덕션 벤치마킹 반영
- *
- * 핵심 원칙:
- *   1. 원본 파일 → FFmpeg 직접 트랜스코딩 (캔버스 캡처 절대 금지)
- *   2. 단일 ffmpeg.exec() 호출로 완결 (파이썬 버전 동일 패턴)
- *   3. 다중 클립 = 개별 인코딩 + concat demuxer (FFmpeg 공식 권장)
- *   4. CDN @ffmpeg/core@0.12.10 ESM + toBlobURL
- */
+/* B7 v3.1: drawtext 폰트 로딩 + 안정성 개선 */
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL, fetchFile } from '@ffmpeg/util';
@@ -22,8 +15,8 @@ export interface ExportPreset {
   fps: number;
   videoBitrate: string;
   audioBitrate: string;
-  crf: string;           // ★ CRF 추가 (파이썬 버전 핵심)
-  preset: string;         // ★ x264 preset 추가
+  crf: string;
+  preset: string;
   format: 'mp4' | 'webm';
   description: string;
 }
@@ -38,7 +31,7 @@ export interface ExportProgress {
 
 export type ProgressCallback = (p: ExportProgress) => void;
 
-/* ═══ 프리셋 (파이썬 aivideostudio PRESETS 벤치마킹) ═══ */
+/* ═══ 프리셋 ═══ */
 
 export const EXPORT_PRESETS: ExportPreset[] = [
   {
@@ -85,46 +78,24 @@ export const EXPORT_PRESETS: ExportPreset[] = [
   },
 ];
 
+/* ═══ 폰트 URL (Google Fonts CDN — Noto Sans KR, 한글+영문 지원) ═══ */
+const FONT_URL = 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/Variable/TTF/NotoSansCJKkr-VF.ttf';
+const FONT_FALLBACK_URL = 'https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf';
+export const FONT_FILENAME = '/tmp/font.ttf';
+
 /* ═══ 엔진 인터페이스 ═══ */
 
 export interface ExportEngineApi {
   init(onLog?: (msg: string) => void): Promise<void>;
   isLoaded(): boolean;
-
-  /**
-   * 소스 파일을 FFmpeg 가상 FS에 기록.
-   * src는 blob URL 또는 http URL.
-   */
+  loadFont(): Promise<boolean>;
+  isFontLoaded(): boolean;
   loadSource(filename: string, src: string): Promise<void>;
-
-  /**
-   * 텍스트 파일 기록 (concat 리스트 등).
-   */
   writeText(filename: string, content: string): Promise<void>;
-
-  /**
-   * FFmpeg 명령 실행. 파이썬 export_engine.py의 cmd 빌드와 동일한 패턴.
-   */
   exec(args: string[]): Promise<number>;
-
-  /**
-   * 결과 파일 읽기.
-   */
   readOutput(filename: string): Promise<Uint8Array>;
-
-  /**
-   * 파일 삭제.
-   */
   cleanup(filenames: string[]): Promise<void>;
-
-  /**
-   * 엔진 종료.
-   */
   terminate(): void;
-
-  /**
-   * 진행률 콜백 등록.
-   */
   setProgressCallback(cb: ProgressCallback | null): void;
 }
 
@@ -133,13 +104,13 @@ export interface ExportEngineApi {
 export function createExportEngine(): ExportEngineApi {
   const ffmpeg = new FFmpeg();
   let loaded = false;
+  let fontLoaded = false;
   let progressCb: ProgressCallback | null = null;
   let execStart = 0;
 
   return {
     async init(onLog) {
       if (loaded) return;
-
       const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
 
       if (onLog) {
@@ -152,10 +123,8 @@ export function createExportEngine(): ExportEngineApi {
         const pct = Math.min(99, Math.max(0, Math.round(progress * 100)));
         const remaining = pct > 2 ? (elapsed / pct) * (100 - pct) : 0;
         progressCb({
-          phase: 'encoding',
-          percent: pct,
-          elapsedMs: elapsed,
-          estimatedRemainingMs: remaining,
+          phase: 'encoding', percent: pct,
+          elapsedMs: elapsed, estimatedRemainingMs: remaining,
           message: `인코딩 중… ${pct}%`,
         });
       });
@@ -164,11 +133,33 @@ export function createExportEngine(): ExportEngineApi {
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
         wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
       });
-
       loaded = true;
     },
 
     isLoaded() { return loaded; },
+
+    async loadFont(): Promise<boolean> {
+      if (fontLoaded) return true;
+      try {
+        // 한글 폰트 시도
+        const data = await fetchFile(FONT_URL);
+        await ffmpeg.writeFile(FONT_FILENAME, data);
+        fontLoaded = true;
+        return true;
+      } catch {
+        try {
+          // 폴백: 영문 전용 폰트
+          const data = await fetchFile(FONT_FALLBACK_URL);
+          await ffmpeg.writeFile(FONT_FILENAME, data);
+          fontLoaded = true;
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    },
+
+    isFontLoaded() { return fontLoaded; },
 
     async loadSource(filename, src) {
       const data = await fetchFile(src);
@@ -185,8 +176,7 @@ export function createExportEngine(): ExportEngineApi {
     },
 
     async readOutput(filename) {
-      const data = await ffmpeg.readFile(filename);
-      return data as Uint8Array;
+      return await ffmpeg.readFile(filename) as Uint8Array;
     },
 
     async cleanup(filenames) {
@@ -199,32 +189,24 @@ export function createExportEngine(): ExportEngineApi {
       try { ffmpeg.terminate(); } catch { /* ignore */ }
     },
 
-    setProgressCallback(cb) {
-      progressCb = cb;
-    },
+    setProgressCallback(cb) { progressCb = cb; },
   };
 }
 
-/* ═══ 유틸: FFmpeg 인자 빌더 (파이썬 export_engine.py 패턴 그대로) ═══ */
+/* ═══ FFmpeg 인자 빌더 ═══ */
 
-/**
- * 단일 소스 파일 → 출력 파일로 트랜스코딩하는 FFmpeg 인자 배열 생성.
- * 파이썬 버전의 cmd 빌드 로직과 동일:
- *   -i input → -vf (scale,pad,fps) → -c:v libx264 -b:v -c:a aac -b:a → preset,crf → output
- */
 export function buildSingleClipArgs(
   inputFn: string,
   outputFn: string,
   preset: ExportPreset,
   opts: {
-    ss?: number;       // 시작점 (초)
-    duration?: number;  // 길이 (초)
-    textFilter?: string; // drawtext 필터 문자열 (선택)
+    ss?: number;
+    duration?: number;
+    textFilter?: string;
   } = {},
 ): string[] {
   const args: string[] = [];
 
-  // 입력 트림 (seek before input for speed)
   if (opts.ss != null && opts.ss > 0) {
     args.push('-ss', opts.ss.toFixed(3));
   }
@@ -233,7 +215,6 @@ export function buildSingleClipArgs(
     args.push('-t', opts.duration.toFixed(3));
   }
 
-  // 비디오 필터 체인 (파이썬 버전: scale, pad, fps + subtitles)
   const vfParts: string[] = [
     `scale=${preset.width}:${preset.height}:force_original_aspect_ratio=decrease`,
     `pad=${preset.width}:${preset.height}:(ow-iw)/2:(oh-ih)/2:black`,
@@ -244,60 +225,41 @@ export function buildSingleClipArgs(
   }
   args.push('-vf', vfParts.join(','));
 
-  // 코덱 (파이썬 버전: libx264 + preset + crf + aac)
   args.push(
-    '-c:v', 'libx264',
-    '-pix_fmt', 'yuv420p',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
     '-b:v', preset.videoBitrate,
-    '-preset', preset.preset,
-    '-crf', preset.crf,
-    '-c:a', 'aac',
-    '-b:a', preset.audioBitrate,
+    '-preset', preset.preset, '-crf', preset.crf,
+    '-c:a', 'aac', '-b:a', preset.audioBitrate,
     '-movflags', '+faststart',
     '-y', outputFn,
   );
-
   return args;
 }
 
-/**
- * concat demuxer를 사용한 다중 세그먼트 합치기 인자 생성.
- * FFmpeg 공식 권장 방식 (코덱/해상도/fps가 동일한 세그먼트).
- */
 export function buildConcatArgs(
   listFn: string,
   outputFn: string,
   opts: {
-    streamCopy?: boolean;  // true면 -c copy (재인코딩 없음)
-    textFilter?: string;   // 있으면 재인코딩 필요
+    streamCopy?: boolean;
+    textFilter?: string;
     preset?: ExportPreset;
   } = {},
 ): string[] {
-  const args: string[] = [
-    '-f', 'concat',
-    '-safe', '0',
-    '-i', listFn,
-  ];
+  const args: string[] = ['-f', 'concat', '-safe', '0', '-i', listFn];
 
   if (opts.streamCopy && !opts.textFilter) {
-    // 스트림 복사 (재인코딩 없음 → 가장 빠름)
     args.push('-c', 'copy');
   } else if (opts.preset) {
-    // 재인코딩 (텍스트 오버레이가 있을 때)
     const vfParts: string[] = [];
     if (opts.textFilter) vfParts.push(opts.textFilter);
     if (vfParts.length > 0) args.push('-vf', vfParts.join(','));
     args.push(
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
+      '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
       '-b:v', opts.preset.videoBitrate,
-      '-preset', opts.preset.preset,
-      '-crf', opts.preset.crf,
-      '-c:a', 'aac',
-      '-b:a', opts.preset.audioBitrate,
+      '-preset', opts.preset.preset, '-crf', opts.preset.crf,
+      '-c:a', 'aac', '-b:a', opts.preset.audioBitrate,
     );
   }
-
   args.push('-movflags', '+faststart', '-y', outputFn);
   return args;
 }

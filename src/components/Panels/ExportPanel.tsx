@@ -1,13 +1,12 @@
 /* ─── src/components/Panels/ExportPanel.tsx ─── */
-/* B7 v3: 파이썬 aivideostudio 패턴 적용.
- * 원본 파일 직접 트랜스코딩 – 캔버스 캡처 완전 제거.
- */
+/* B7 v3.1: drawtext fontfile 수정 + 텍스트 없으면 필터 생략 */
 
 import React, { useState, useCallback, useRef } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
 import {
   createExportEngine,
   EXPORT_PRESETS,
+  FONT_FILENAME,
   buildSingleClipArgs,
   buildConcatArgs,
   type ExportPreset,
@@ -97,15 +96,20 @@ function fmtSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** 텍스트 클립 → drawtext 필터 문자열 */
+/**
+ * ★ 핵심 수정: drawtext에 fontfile= 필수 추가
+ * FFmpeg-WASM은 시스템 폰트가 없으므로 반드시 fontfile을 지정해야 함.
+ */
 function buildTextFilters(
   textTracks: Track[],
   rangeStart: number,
   rangeEnd: number,
   outW: number,
   outH: number,
+  fontFile: string,
 ): string {
   const parts: string[] = [];
+
   for (const track of textTracks) {
     for (const clip of track.clips) {
       if (clip.disabled || !clip.textContent) continue;
@@ -115,11 +119,14 @@ function buildTextFilters(
       const tc = clip.textContent;
       const st = tc.style;
 
+      // FFmpeg drawtext 특수문자 이스케이프
       const safeText = tc.text
-        .replace(/\\/g, '\\\\')
-        .replace(/'/g, "'\\\\\\''")
-        .replace(/:/g, '\\:')
-        .replace(/%/g, '%%');
+        .replace(/\\/g, '\\\\\\\\')
+        .replace(/'/g, "\u2019")          // 스마트 따옴표로 대체 (가장 안전)
+        .replace(/:/g, '\\\\:')
+        .replace(/%/g, '%%')
+        .replace(/\[/g, '\\\\[')
+        .replace(/\]/g, '\\\\]');
 
       const fontSize = Math.round(st.fontSize * (outH / 1080));
       const x = `(w*${(st.positionX / 100).toFixed(4)}-tw/2)`;
@@ -128,8 +135,11 @@ function buildTextFilters(
       const enableStart = Math.max(0, clip.startTime - rangeStart);
       const enableEnd = Math.min(rangeEnd - rangeStart, clipEnd - rangeStart);
 
-      let f = `drawtext=text='${safeText}'`;
-      f += `:fontsize=${fontSize}:fontcolor=${st.color}`;
+      // ★ fontfile= 반드시 포함
+      let f = `drawtext=fontfile=${fontFile}`;
+      f += `:text='${safeText}'`;
+      f += `:fontsize=${fontSize}`;
+      f += `:fontcolor=${st.color}`;
       f += `:x=${x}:y=${y}`;
       f += `:enable='between(t\\,${enableStart.toFixed(3)}\\,${enableEnd.toFixed(3)})'`;
 
@@ -139,10 +149,10 @@ function buildTextFilters(
       }
       if (st.shadowBlur > 0) {
         f += `:shadowx=${st.shadowOffsetX || 2}:shadowy=${st.shadowOffsetY || 2}`;
-        f += `:shadowcolor=${st.shadowColor || 'black'}`;
+        f += `:shadowcolor=${st.shadowColor || 'black@0.8'}`;
       }
       if (st.backgroundColor && st.backgroundColor !== 'transparent') {
-        f += `:box=1:boxcolor=${st.backgroundColor}:boxborderw=6`;
+        f += `:box=1:boxcolor=${st.backgroundColor}@0.6:boxborderw=6`;
       }
 
       parts.push(f);
@@ -151,11 +161,11 @@ function buildTextFilters(
   return parts.join(',');
 }
 
-/** 내보내기 범위 안에 있는 비디오 클립 수집 */
+/** 비디오 클립 수집 */
 interface VideoClipInfo {
   clip: Clip;
   asset: Asset;
-  inputFn: string;  // FFmpeg 가상 FS 내 파일명
+  inputFn: string;
 }
 
 function collectVideoClips(
@@ -165,19 +175,15 @@ function collectVideoClips(
 ): VideoClipInfo[] {
   const result: VideoClipInfo[] = [];
   let idx = 0;
-
   for (const track of project.tracks) {
     if (track.type !== 'video') continue;
     const sorted = [...track.clips].sort((a, b) => a.startTime - b.startTime);
-
     for (const clip of sorted) {
       if (clip.disabled) continue;
       const clipEnd = clip.startTime + clip.duration;
       if (clipEnd <= rangeStart || clip.startTime >= rangeEnd) continue;
-
       const asset = project.assets.find(a => a.id === clip.assetId);
       if (!asset?.src) continue;
-
       const ext = (asset.name?.split('.').pop() || 'mp4').toLowerCase();
       const inputFn = `src${idx}.${ext}`;
       result.push({ clip, asset, inputFn });
@@ -198,6 +204,7 @@ export function ExportPanel(): React.ReactElement {
   const [presetId, setPresetId] = useState('yt-1080');
   const [useInOut, setUseInOut] = useState(false);
   const [ffmpegReady, setFfmpegReady] = useState(false);
+  const [fontReady, setFontReady] = useState(false);
   const [loadingEngine, setLoadingEngine] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
@@ -212,7 +219,7 @@ export function ExportPanel(): React.ReactElement {
     setLogs(prev => [...prev.slice(-100), `[${new Date().toLocaleTimeString()}] ${msg}`]);
   }, []);
 
-  /* ── FFmpeg 로드 ── */
+  /* ── FFmpeg + 폰트 로드 ── */
   const handleLoad = useCallback(async () => {
     setLoadingEngine(true);
     setLogs([]);
@@ -223,6 +230,16 @@ export function ExportPanel(): React.ReactElement {
       engineRef.current = eng;
       setFfmpegReady(true);
       log('✅ FFmpeg 준비 완료');
+
+      // 폰트 로드 (자막 번인에 필수)
+      log('한글 폰트 로딩 중… (Noto Sans CJK KR)');
+      const fontOk = await eng.loadFont();
+      setFontReady(fontOk);
+      if (fontOk) {
+        log('✅ 한글 폰트 로드 완료');
+      } else {
+        log('⚠️ 폰트 로드 실패 — 텍스트 오버레이 불가 (비디오만 내보내기 가능)');
+      }
     } catch (err: any) {
       log(`❌ 로드 실패: ${err.message || err}`);
     }
@@ -248,7 +265,7 @@ export function ExportPanel(): React.ReactElement {
     const filesToClean: string[] = [outFile];
 
     try {
-      /* ── Phase 1: 소스 파일 로딩 ── */
+      /* ── 1. 소스 로딩 ── */
       setProgress({
         phase: 'loading', percent: 5, elapsedMs: 0,
         estimatedRemainingMs: 0, message: '소스 파일 로딩 중…',
@@ -257,18 +274,10 @@ export function ExportPanel(): React.ReactElement {
       const vClips = collectVideoClips(project, rangeStart, rangeEnd);
       if (vClips.length === 0) throw new Error('내보낼 비디오 클립이 없습니다.');
 
-      // 중복 에셋 방지: 같은 src는 한 번만 로드
-      const loadedSrcs = new Set<string>();
       for (let i = 0; i < vClips.length; i++) {
         const { asset, inputFn } = vClips[i];
-        if (!loadedSrcs.has(asset.src)) {
-          log(`소스 로딩: ${asset.name} → ${inputFn}`);
-          await eng.loadSource(inputFn, asset.src);
-          loadedSrcs.add(asset.src);
-        } else {
-          // 같은 소스를 다른 이름으로 복사해야 함 (FFmpeg는 파일명으로 구분)
-          await eng.loadSource(inputFn, asset.src);
-        }
+        log(`소스 로딩: ${asset.name} → ${inputFn}`);
+        await eng.loadSource(inputFn, asset.src);
         filesToClean.push(inputFn);
         setProgress(prev => prev ? {
           ...prev,
@@ -277,36 +286,46 @@ export function ExportPanel(): React.ReactElement {
         } : prev);
       }
 
-      // 텍스트 필터
+      /* ── 텍스트 필터 (폰트가 있을 때만) ── */
       const textTracks = project.tracks.filter(t => t.type === 'text');
-      const textFilter = buildTextFilters(textTracks, rangeStart, rangeEnd, preset.width, preset.height);
+      let textFilter = '';
+      if (fontReady && textTracks.length > 0) {
+        textFilter = buildTextFilters(
+          textTracks, rangeStart, rangeEnd,
+          preset.width, preset.height, FONT_FILENAME,
+        );
+        if (textFilter) {
+          log(`텍스트 필터 생성됨 (${textFilter.split('drawtext').length - 1}개 자막)`);
+        }
+      } else if (textTracks.some(t => t.clips.some(c => c.textContent && !c.disabled))) {
+        log('⚠️ 폰트 미로드 — 텍스트 오버레이를 건너뜁니다.');
+      }
 
       eng.setProgressCallback((p) => {
-        // 엔진 진행률을 20~90% 범위로 매핑
         const mapped: ExportProgress = {
           ...p,
           percent: 20 + Math.round(p.percent * 0.7),
           elapsedMs: performance.now() - t0,
+          estimatedRemainingMs: 0,
         };
-        mapped.estimatedRemainingMs =
-          mapped.percent > 5
-            ? (mapped.elapsedMs / mapped.percent) * (100 - mapped.percent)
-            : 0;
+        if (mapped.percent > 5) {
+          mapped.estimatedRemainingMs =
+            (mapped.elapsedMs / mapped.percent) * (100 - mapped.percent);
+        }
         setProgress(mapped);
       });
 
-      /* ── Phase 2: 인코딩 ── */
+      /* ── 2. 인코딩 ── */
 
       if (vClips.length === 1) {
-        /* ═══ 단일 클립: 직접 트랜스코딩 (파이썬 버전과 동일) ═══ */
+        /* ═══ 단일 클립 ═══ */
         const { clip, inputFn } = vClips[0];
         const ss = (clip.inPoint || 0) + Math.max(0, rangeStart - clip.startTime);
         const dur = Math.min(clip.duration, rangeDur);
 
         log(`단일 클립 트랜스코딩: ${inputFn} (${dur.toFixed(1)}s)`);
         setProgress(prev => prev ? {
-          ...prev, phase: 'encoding', percent: 20,
-          message: '인코딩 중…',
+          ...prev, phase: 'encoding', percent: 20, message: '인코딩 중…',
         } : prev);
 
         const args = buildSingleClipArgs(inputFn, outFile, preset, {
@@ -314,17 +333,12 @@ export function ExportPanel(): React.ReactElement {
           duration: dur,
           textFilter: textFilter || undefined,
         });
-
-        log(`FFmpeg args: ${args.join(' ')}`);
-        const exitCode = await eng.exec(args);
-        if (exitCode !== 0) {
-          log(`⚠️ FFmpeg exit code: ${exitCode}`);
-        }
+        log(`FFmpeg: ${args.join(' ')}`);
+        await eng.exec(args);
 
       } else {
         /* ═══ 다중 클립: 개별 인코딩 → concat demuxer ═══ */
-        log(`다중 클립 (${vClips.length}개) → 개별 인코딩 + concat`);
-
+        log(`다중 클립 (${vClips.length}개)`);
         const segFiles: string[] = [];
 
         for (let i = 0; i < vClips.length; i++) {
@@ -333,25 +347,23 @@ export function ExportPanel(): React.ReactElement {
           const clipEnd = Math.min(clip.startTime + clip.duration, rangeEnd);
           const ss = (clip.inPoint || 0) + (clipStart - clip.startTime);
           const dur = clipEnd - clipStart;
-          if (dur <= 0) continue;
+          if (dur <= 0.01) continue;
 
           const segFn = `seg${i}.mp4`;
+          log(`세그먼트 ${i}: ss=${ss.toFixed(2)} dur=${dur.toFixed(2)}`);
 
           setProgress(prev => prev ? {
             ...prev, phase: 'encoding',
             percent: 20 + Math.round((i / vClips.length) * 50),
-            message: `세그먼트 ${i + 1}/${vClips.length} 인코딩…`,
+            message: `세그먼트 ${i + 1}/${vClips.length}…`,
           } : prev);
 
-          log(`세그먼트 ${i}: ${inputFn} ss=${ss.toFixed(2)} dur=${dur.toFixed(2)}`);
-
-          // 각 세그먼트를 동일한 코덱/해상도/fps로 인코딩
+          // ★ 세그먼트 단계에서는 텍스트 필터 미적용
+          //   (concat 후 텍스트 번인 — 시간 오프셋이 전체 타임라인 기준이므로)
           const segArgs = buildSingleClipArgs(inputFn, segFn, preset, {
             ss: ss > 0.01 ? ss : undefined,
             duration: dur,
-            // 텍스트는 concat 후에 적용 (세그먼트 단계에선 미적용)
           });
-
           await eng.exec(segArgs);
           segFiles.push(segFn);
           filesToClean.push(segFn);
@@ -359,44 +371,36 @@ export function ExportPanel(): React.ReactElement {
 
         if (segFiles.length === 0) throw new Error('인코딩된 세그먼트가 없습니다.');
 
-        // concat 리스트 파일 생성
+        // concat 리스트
         const listContent = segFiles.map(f => `file '${f}'`).join('\n');
         await eng.writeText('list.txt', listContent);
         filesToClean.push('list.txt');
 
         log(`concat: ${segFiles.length}개 세그먼트 합치기…`);
         setProgress(prev => prev ? {
-          ...prev, phase: 'concat', percent: 75,
-          message: '세그먼트 합치기…',
+          ...prev, phase: 'concat', percent: 75, message: '세그먼트 합치기…',
         } : prev);
 
-        // concat: 코덱이 동일하므로 스트림 복사 (재인코딩 불필요 = 매우 빠름)
-        // 텍스트 필터가 있으면 재인코딩 필요
+        // ★ 텍스트가 없으면 -c copy (초고속), 있으면 재인코딩
         const concatArgs = buildConcatArgs('list.txt', outFile, {
           streamCopy: !textFilter,
           textFilter: textFilter || undefined,
           preset: textFilter ? preset : undefined,
         });
-
-        log(`FFmpeg concat args: ${concatArgs.join(' ')}`);
+        log(`FFmpeg concat: ${concatArgs.join(' ')}`);
         await eng.exec(concatArgs);
       }
 
-      /* ── Phase 3: 결과 수집 ── */
+      /* ── 3. 결과 ── */
       setProgress(prev => prev ? {
-        ...prev, phase: 'encoding', percent: 92,
-        message: '결과 파일 읽기…',
+        ...prev, percent: 92, message: '결과 파일 읽기…',
       } : prev);
 
       const outputData = await eng.readOutput(outFile);
-
       if (outputData.length === 0) {
-        throw new Error(
-          '0바이트 출력 파일. FFmpeg 인코딩 실패 – 로그를 확인하세요.',
-        );
+        throw new Error('0바이트 출력. FFmpeg 인코딩 실패 — 로그를 확인하세요.');
       }
 
-      // 정리
       await eng.cleanup(filesToClean);
 
       const blob = new Blob([outputData], { type: `video/${preset.format}` });
@@ -405,8 +409,7 @@ export function ExportPanel(): React.ReactElement {
       setResultSize(blob.size);
 
       const elapsed = performance.now() - t0;
-      log(`✅ 완료: ${fmtSize(blob.size)}, ${fmtTime(elapsed)}`);
-
+      log(`✅ 완료: ${fmtSize(blob.size)} · ${fmtTime(elapsed)}`);
       setProgress({
         phase: 'done', percent: 100,
         elapsedMs: elapsed, estimatedRemainingMs: 0,
@@ -421,15 +424,13 @@ export function ExportPanel(): React.ReactElement {
         elapsedMs: performance.now() - t0, estimatedRemainingMs: 0,
         message: `❌ ${err.message || err}`,
       });
-      // 에러 시에도 정리 시도
       try { await eng.cleanup(filesToClean); } catch { /* ignore */ }
     }
 
     eng.setProgressCallback(null);
     setExporting(false);
-  }, [isPlaying, togglePlay, useInOut, inOut, project, preset, log]);
+  }, [isPlaying, togglePlay, useInOut, inOut, project, preset, fontReady, log]);
 
-  /* ── 다운로드 ── */
   const handleDownload = useCallback(() => {
     if (!resultUrl) return;
     const a = document.createElement('a');
@@ -438,32 +439,34 @@ export function ExportPanel(): React.ReactElement {
     a.click();
   }, [resultUrl, project.name, preset]);
 
-  /* ── 범위 계산 ── */
   const rangeStart = useInOut && inOut.inPoint != null ? inOut.inPoint : 0;
   const rangeEnd = useInOut && inOut.outPoint != null ? inOut.outPoint : project.duration;
   const rangeDur = rangeEnd - rangeStart;
-
-  /* ── COOP/COEP 경고 확인 ── */
   const isCrossOriginIsolated = typeof window !== 'undefined' && window.crossOriginIsolated;
 
   return (
     <div style={S.root}>
-      <div style={S.title}>📤 내보내기 (v3)</div>
+      <div style={S.title}>📤 내보내기 (v3.1)</div>
 
       {!isCrossOriginIsolated && (
         <div style={S.warn}>
-          ⚠️ Cross-Origin Isolation이 비활성 상태입니다.
-          Vite 서버 재시작이 필요할 수 있습니다.
-          (vite.config.ts에 COOP/COEP 헤더 추가 확인)
+          ⚠️ Cross-Origin Isolation 비활성.
+          Vite 서버 재시작 필요. (vite.config.ts COOP/COEP 확인)
         </div>
       )}
 
       {!ffmpegReady ? (
         <button style={S.btnLoad} onClick={handleLoad} disabled={loadingEngine}>
-          {loadingEngine ? '⏳ FFmpeg WASM 로딩 중… (~31MB)' : '🔄 인코더 로드 (~31MB WASM 다운로드)'}
+          {loadingEngine ? '⏳ FFmpeg + 폰트 로딩 중…' : '🔄 인코더 + 한글 폰트 로드'}
         </button>
       ) : (
-        <div style={{ fontSize: 10, color: '#50c878' }}>✅ FFmpeg 준비 완료</div>
+        <div style={{ fontSize: 10 }}>
+          <span style={{ color: '#50c878' }}>✅ FFmpeg</span>
+          {' · '}
+          <span style={{ color: fontReady ? '#50c878' : '#ffaa44' }}>
+            {fontReady ? '✅ 한글 폰트' : '⚠️ 폰트 없음 (자막 건너뜀)'}
+          </span>
+        </div>
       )}
 
       <div style={S.divider} />
@@ -480,7 +483,7 @@ export function ExportPanel(): React.ReactElement {
             <span style={S.presetName}>{p.name}</span>
             <span style={S.presetDesc}>{p.description}</span>
             <span style={S.presetSpec}>
-              {p.width}×{p.height} · {p.fps}fps · CRF {p.crf} · {p.preset}
+              {p.width}×{p.height} · {p.fps}fps · CRF {p.crf}
             </span>
           </div>
         ))}
@@ -489,10 +492,8 @@ export function ExportPanel(): React.ReactElement {
       <div style={S.divider} />
 
       <div style={{ ...S.row, marginBottom: 4 }}>
-        <input
-          type="checkbox" style={S.checkbox} checked={useInOut}
-          onChange={e => setUseInOut(e.target.checked)} id="exp-io"
-        />
+        <input type="checkbox" style={S.checkbox} checked={useInOut}
+          onChange={e => setUseInOut(e.target.checked)} id="exp-io" />
         <label htmlFor="exp-io" style={{ fontSize: 11, cursor: 'pointer' }}>
           In/Out 범위만 내보내기
         </label>
@@ -504,23 +505,14 @@ export function ExportPanel(): React.ReactElement {
       <div style={S.divider} />
 
       {!exporting ? (
-        <button
-          style={ffmpegReady ? S.btn : S.btnOff}
-          onClick={handleExport}
-          disabled={!ffmpegReady}
-        >
+        <button style={ffmpegReady ? S.btn : S.btnOff}
+          onClick={handleExport} disabled={!ffmpegReady}>
           🎬 내보내기 시작
         </button>
       ) : (
-        <button
-          style={{ ...S.btn, background: '#c0392b' }}
-          onClick={() => {
-            engineRef.current?.terminate();
-            setExporting(false);
-            log('⏹ 사용자가 취소했습니다.');
-          }}
-        >
-          ⏹ 취소 (엔진 종료)
+        <button style={{ ...S.btn, background: '#c0392b' }}
+          onClick={() => { engineRef.current?.terminate(); setExporting(false); }}>
+          ⏹ 취소
         </button>
       )}
 
@@ -535,8 +527,7 @@ export function ExportPanel(): React.ReactElement {
               <>
                 경과: {fmtTime(progress.elapsedMs)}
                 {progress.estimatedRemainingMs > 0 &&
-                  ` · 남은 시간: ~${fmtTime(progress.estimatedRemainingMs)}`
-                }
+                  ` · 남은: ~${fmtTime(progress.estimatedRemainingMs)}`}
               </>
             )}
           </div>
@@ -546,8 +537,7 @@ export function ExportPanel(): React.ReactElement {
       {resultUrl && (
         <>
           <a style={S.link} href="#" onClick={e => { e.preventDefault(); handleDownload(); }}>
-            💾 다운로드: {project.name || 'BadaCut'}_{preset.id}.{preset.format}
-            ({fmtSize(resultSize)})
+            💾 {project.name || 'BadaCut'}_{preset.id}.{preset.format} ({fmtSize(resultSize)})
           </a>
           <video style={S.videoPreview} src={resultUrl} controls />
         </>
