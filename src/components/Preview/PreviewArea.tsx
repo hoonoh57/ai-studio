@@ -863,7 +863,7 @@ export function PreviewArea() {
         }}
         onMouseDown={handleCanvasMouseDown}
       >
-        <div style={{ position: 'relative', flexShrink: 0 }}>
+        <div style={{ position: 'relative', flexShrink: 0, overflow: 'hidden' }}>
           {/* 레이어 1: WebGPU 캔버스 (비디오 프레임) */}
           <canvas
             ref={gpuCanvasRef}
