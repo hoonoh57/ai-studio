@@ -249,8 +249,15 @@ async function exportSingleClip(
     (Math.abs(srcW - preset.width) <= 2 && Math.abs(srcH - preset.height) <= 2) ||
     (Math.abs(srcW - preset.height) <= 2 && Math.abs(srcH - preset.width) <= 2)
   );
-  const needsResize = !sizesMatch;
+  let needsResize = !sizesMatch;
   onLog(`📐 소스: ${srcW}x${srcH}, 타겟: ${preset.width}x${preset.height}, resize=${needsResize}`);
+
+  // ★ 소스가 타겟보다 작으면 업스케일 불필요 → transmux로 전환
+  if (needsResize && !hasText && srcW > 0 && srcH > 0 
+      && srcW <= preset.width && srcH <= preset.height) {
+    onLog(`⚡ 업스케일 불필요: 소스(${srcW}x${srcH})가 타겟보다 작음 → transmux로 전환`);
+    needsResize = false;
+  }
 
   const needsTranscode = hasText || needsResize;
 
