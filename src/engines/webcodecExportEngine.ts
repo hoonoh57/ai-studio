@@ -1,80 +1,104 @@
-/* ─── src/engines/webcodecExportEngine.ts ─── */
-/* WebCodecs + Mediabunny 기반 하드웨어 가속 내보내기 엔진 */
+// src/engines/webcodecExportEngine.ts
+// ═══════════════════════════════════════════════════════════════════════════════
+// Smart Render Export Engine v2 — 기존 exportWithWebCodecs 시그니처를 유지하면서
+// 패킷-레벨 스마트 렌더링을 구현
+// ═══════════════════════════════════════════════════════════════════════════════
 
 import {
   Input,
   Output,
-  Conversion,
   Mp4OutputFormat,
   BufferTarget,
+  Conversion,
+  EncodedVideoPacketSource,
+  EncodedAudioPacketSource,
+  EncodedPacketSink,
+  VideoSampleSink,
+  EncodedPacket,
   BlobSource,
   ALL_FORMATS,
-  type VideoSample,
 } from 'mediabunny';
 
-import type { ExportPreset, ExportProgress, ProgressCallback } from './exportEngine';
-import type { Track, Clip, Asset } from '@/types/project';
-import type { TextStyle } from '@/types/textClip';
+import { analyzeTimeline, type RenderPlan, type RenderSegment } from './renderPlan';
 
-/* ═══ WebCodecs 지원 검사 ═══ */
+// ─── Public Interface (기존 호출 코드 호환) ──────────────────────────────────
 
 export function isWebCodecsSupported(): boolean {
   return (
-    typeof globalThis.VideoEncoder !== 'undefined' &&
-    typeof globalThis.VideoDecoder !== 'undefined' &&
-    typeof globalThis.AudioEncoder !== 'undefined' &&
-    typeof globalThis.AudioDecoder !== 'undefined'
+    typeof VideoEncoder !== 'undefined' &&
+    typeof VideoDecoder !== 'undefined' &&
+    typeof AudioEncoder !== 'undefined' &&
+    typeof AudioDecoder !== 'undefined' &&
+    typeof OffscreenCanvas !== 'undefined'
   );
 }
 
-/* ═══ 비트레이트 매핑 ═══ */
-
-function presetToBitrate(preset: ExportPreset): number {
-  // "8M" → 8_000_000
-  const match = preset.videoBitrate.match(/^(\d+)([MKk]?)$/);
-  if (!match) return 8_000_000;
-  const num = parseInt(match[1]);
-  const unit = match[2].toUpperCase();
-  if (unit === 'M') return num * 1_000_000;
-  if (unit === 'K') return num * 1_000;
-  return num;
+export interface WebCodecExportOptions {
+  tracks: any[];
+  rangeStart: number;
+  rangeEnd: number;
+  preset: string;
+  onProgress?: (p: { phase: string; percent: number; message: string; elapsedMs: number }) => void;
+  onLog?: (msg: string) => void;
+  abortSignal?: AbortSignal;
 }
 
-function presetToAudioBitrate(preset: ExportPreset): number {
-  const match = preset.audioBitrate.match(/^(\d+)([Kk]?)$/);
-  if (!match) return 192_000;
-  const num = parseInt(match[1]);
-  return match[2] ? num * 1_000 : num;
+// ─── Preset Helpers ──────────────────────────────────────────────────────────
+
+function presetToBitrate(preset: string): number {
+  const m = preset.match(/(\d+)[MmKk]/);
+  if (!m) return 8_000_000;
+  const val = parseInt(m[1]);
+  return preset.toLowerCase().includes('k') ? val * 1000 : val * 1_000_000;
 }
 
-/* ═══ 텍스트 렌더링 (Canvas 네이티브) ═══ */
+function presetToAudioBitrate(preset: string): number {
+  return 192_000;
+}
+
+function presetToResolution(preset: string): { width: number; height: number } {
+  if (preset.includes('4K') || preset.includes('2160')) return { width: 3840, height: 2160 };
+  if (preset.includes('1080')) return { width: 1920, height: 1080 };
+  if (preset.includes('720')) return { width: 1280, height: 720 };
+  if (preset.includes('480')) return { width: 854, height: 480 };
+  return { width: 1920, height: 1080 };
+}
+
+function fmtTime(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
+async function fetchAsBlob(urlOrBlob: string | Blob): Promise<Blob> {
+  if (urlOrBlob instanceof Blob) return urlOrBlob;
+  const resp = await fetch(urlOrBlob);
+  return resp.blob();
+}
+
+// ─── Text Overlay ────────────────────────────────────────────────────────────
 
 interface TextOverlay {
   text: string;
-  style: TextStyle;
-  enableStart: number; // 초
-  enableEnd: number;   // 초
+  style: any;
+  position: { x: number; y: number };
 }
 
-function collectTextOverlays(
-  textTracks: Track[],
-  rangeStart: number,
-  rangeEnd: number,
-): TextOverlay[] {
+function collectTextOverlays(tracks: any[], time: number): TextOverlay[] {
   const overlays: TextOverlay[] = [];
-
-  for (const track of textTracks) {
-    for (const clip of track.clips) {
-      if (clip.disabled || !clip.textContent) continue;
-      const clipEnd = clip.startTime + clip.duration;
-      if (clipEnd <= rangeStart || clip.startTime >= rangeEnd) continue;
-
-      overlays.push({
-        text: clip.textContent.text,
-        style: clip.textContent.style,
-        enableStart: Math.max(0, clip.startTime - rangeStart),
-        enableEnd: Math.min(rangeEnd - rangeStart, clipEnd - rangeStart),
-      });
+  for (const track of tracks) {
+    if (track.type !== 'text' || track.muted) continue;
+    for (const clip of (track.clips || [])) {
+      if (clip.disabled === true) continue;
+      const cs = clip.startTime ?? 0;
+      const ce = cs + (clip.duration ?? 0);
+      if (time >= cs && time < ce) {
+        overlays.push({
+          text: clip.textContent || '',
+          style: clip.style || {},
+          position: clip.position || { x: 0.5, y: 0.8 },
+        });
+      }
     }
   }
   return overlays;
@@ -83,693 +107,526 @@ function collectTextOverlays(
 function drawTextOverlays(
   ctx: OffscreenCanvasRenderingContext2D,
   overlays: TextOverlay[],
-  timestamp: number, // 초
-  canvasW: number,
-  canvasH: number,
+  w: number,
+  h: number,
 ): void {
-  for (const ov of overlays) {
-    if (timestamp < ov.enableStart || timestamp > ov.enableEnd) continue;
+  for (const { text, style, position } of overlays) {
+    if (!text) continue;
 
-    const st = ov.style;
-    const fontSize = Math.round(st.fontSize * (canvasH / 1080));
-    const x = (st.positionX / 100) * canvasW;
-    const y = (st.positionY / 100) * canvasH;
+    const fontSize = style.fontSize || Math.round(h * 0.05);
+    const fontFamily = style.fontFamily || 'Arial';
+    const fontWeight = style.fontWeight || 'bold';
+    const color = style.color || '#FFFFFF';
+    const bg = style.backgroundColor || 'transparent';
+    const strokeColor = style.strokeColor || '#000000';
+    const strokeWidth = style.strokeWidth || 2;
+    const shadowColor = style.shadowColor || 'rgba(0,0,0,0.7)';
+    const shadowBlur = style.shadowBlur || 4;
 
-    ctx.save();
-    ctx.textAlign = st.textAlign as CanvasTextAlign;
+    ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    // 폰트 설정 — 브라우저 네이티브 폰트 사용 (VF/OTF/TTF 모두 지원)
-    const fontStyle = st.fontStyle === 'italic' ? 'italic ' : '';
-    ctx.font = `${fontStyle}${st.fontWeight} ${fontSize}px ${st.fontFamily || 'Noto Sans KR, sans-serif'}`;
+    const x = position.x * w;
+    const y = position.y * h;
 
-    // 배경 박스
-    if (st.backgroundColor && st.backgroundColor !== 'transparent') {
-      const metrics = ctx.measureText(ov.text);
-      const pad = 6;
-      const bx = x - metrics.actualBoundingBoxLeft - pad;
-      const by = y - fontSize / 2 - pad;
-      const bw = metrics.width + pad * 2;
-      const bh = fontSize + pad * 2;
-      ctx.fillStyle = st.backgroundColor;
-      ctx.globalAlpha = 0.6;
-      ctx.fillRect(bx, by, bw, bh);
-      ctx.globalAlpha = 1;
+    // Background pill
+    if (bg && bg !== 'transparent') {
+      const met = ctx.measureText(text);
+      const pad = fontSize * 0.3;
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      const rx = x - met.width / 2 - pad;
+      const ry = y - fontSize / 2 - pad;
+      const rw = met.width + pad * 2;
+      const rh = fontSize + pad * 2;
+      ctx.roundRect(rx, ry, rw, rh, pad * 0.5);
+      ctx.fill();
     }
 
-    // 그림자
-    if (st.shadowBlur > 0) {
-      ctx.shadowColor = st.shadowColor || 'rgba(0,0,0,0.8)';
-      ctx.shadowBlur = st.shadowBlur;
-      ctx.shadowOffsetX = st.shadowOffsetX || 2;
-      ctx.shadowOffsetY = st.shadowOffsetY || 2;
-    }
+    // Shadow
+    ctx.shadowColor = shadowColor;
+    ctx.shadowBlur = shadowBlur;
+    ctx.shadowOffsetX = 1;
+    ctx.shadowOffsetY = 1;
 
-    // 외곽선 (먼저 그림)
-    if (st.strokeWidth > 0) {
-      ctx.strokeStyle = st.strokeColor || '#000000';
-      ctx.lineWidth = st.strokeWidth * (canvasH / 1080);
+    // Stroke
+    if (strokeWidth > 0) {
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = strokeWidth;
       ctx.lineJoin = 'round';
-      ctx.strokeText(ov.text, x, y);
+      ctx.strokeText(text, x, y);
     }
 
-    // 본문 텍스트
-    ctx.fillStyle = st.color || '#FFFFFF';
-    ctx.shadowColor = 'transparent'; // 외곽선에만 그림자 적용 후 해제
-    if (st.shadowBlur > 0) {
-      ctx.shadowColor = st.shadowColor || 'rgba(0,0,0,0.8)';
-    }
-    ctx.fillText(ov.text, x, y);
+    // Fill
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
 
-    ctx.restore();
+    // Reset
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
   }
 }
 
-/* ═══ 단일 클립 내보내기 (Mediabunny Conversion API) ═══ */
+// ─── Manual Video Encoder (WebCodecs → EncodedPacket) ────────────────────────
 
-export interface WebCodecExportOptions {
-  preset: ExportPreset;
-  project: {
-    tracks: Track[];
-    assets: Asset[];
-    duration: number;
-  };
-  rangeStart: number;
-  rangeEnd: number;
-  onProgress: ProgressCallback;
-  onLog: (msg: string) => void;
+class ManualVideoEncoder {
+  private encoder: VideoEncoder;
+  private queue: Array<{ packet: EncodedPacket; meta?: EncodedVideoChunkMetadata }> = [];
+  private waiter: (() => void) | null = null;
+  private err: Error | null = null;
+  private kfInterval: number;
+  private count = 0;
+
+  constructor(cfg: {
+    codec: string;
+    width: number;
+    height: number;
+    bitrate: number;
+    fps?: number;
+    keyFrameIntervalSec?: number;
+  }) {
+    const fps = cfg.fps || 30;
+    this.kfInterval = Math.round((cfg.keyFrameIntervalSec || 5) * fps);
+
+    this.encoder = new VideoEncoder({
+      output: (chunk, meta) => {
+        const buf = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(buf);
+        const pkt = new EncodedPacket(
+          buf,
+          chunk.type as 'key' | 'delta',
+          chunk.timestamp / 1e6,
+          (chunk.duration || 0) / 1e6,
+        );
+        this.queue.push({ packet: pkt, meta });
+        this.waiter?.();
+        this.waiter = null;
+      },
+      error: (e) => {
+        this.err = e;
+        this.waiter?.();
+        this.waiter = null;
+      },
+    });
+
+    this.encoder.configure({
+      codec: cfg.codec,
+      width: cfg.width,
+      height: cfg.height,
+      bitrate: cfg.bitrate,
+      hardwareAcceleration: 'prefer-hardware',
+      bitrateMode: 'variable',
+    });
+  }
+
+  async encode(frame: VideoFrame): Promise<Array<{ packet: EncodedPacket; meta?: EncodedVideoChunkMetadata }>> {
+    if (this.err) throw this.err;
+
+    const kf = this.count % this.kfInterval === 0;
+    this.count++;
+    this.encoder.encode(frame, { keyFrame: kf });
+    frame.close();
+
+    // encoder output 콜백이 비동기이므로 약간 대기
+    if (this.queue.length === 0) {
+      await new Promise<void>((r) => {
+        this.waiter = r;
+        setTimeout(r, 50);
+      });
+    }
+
+    const result = this.queue.splice(0);
+    return result;
+  }
+
+  async flush(): Promise<Array<{ packet: EncodedPacket; meta?: EncodedVideoChunkMetadata }>> {
+    await this.encoder.flush();
+    return this.queue.splice(0);
+  }
+
+  close() {
+    try { this.encoder.close(); } catch {}
+  }
 }
 
-import { analyzeTimeline } from './renderPlan';
+// ─── Metadata Builders ───────────────────────────────────────────────────────
 
-export async function exportWithWebCodecs(
-  opts: WebCodecExportOptions,
-): Promise<Blob> {
-  const { preset, project, rangeStart, rangeEnd, onProgress, onLog } = opts;
-  const t0 = performance.now();
+function buildVideoMeta(dec: VideoDecoderConfig, codec: string): EncodedVideoChunkMetadata {
+  return {
+    decoderConfig: {
+      codec,
+      codedWidth: dec.codedWidth,
+      codedHeight: dec.codedHeight,
+      colorSpace: dec.colorSpace,
+      description: dec.description,
+    },
+  };
+}
 
-  onLog('🚀 WebCodecs HW 가속 내보내기 엔진 시작…');
+function buildAudioMeta(dec: AudioDecoderConfig): EncodedAudioChunkMetadata {
+  return {
+    decoderConfig: {
+      codec: dec.codec,
+      numberOfChannels: dec.numberOfChannels,
+      sampleRate: dec.sampleRate,
+      description: dec.description,
+    },
+  };
+}
 
-  /* ── 1. 타임라인 분석 (Render Plan) ── */
-  const plan = analyzeTimeline(
-    project.tracks,
-    project.assets,
+// ─── MAIN EXPORT FUNCTION ────────────────────────────────────────────────────
+
+export async function exportWithWebCodecs(opts: WebCodecExportOptions): Promise<Blob> {
+  const {
+    tracks,
     rangeStart,
     rangeEnd,
-    { width: preset.width, height: preset.height },
-  );
+    preset,
+    onProgress = () => {},
+    onLog = () => {},
+    abortSignal,
+  } = opts;
 
-  // 분석 결과 로그
+  const t0 = performance.now();
+  const totalDur = rangeEnd - rangeStart;
+  const videoBitrate = presetToBitrate(preset);
+  // @ts-ignore
+  const audioBitrate = presetToAudioBitrate(preset);
+
+  onLog('🚀 Smart Render 내보내기 엔진 시작…');
+
+  // ═══ 1. Render Plan ═══════════════════════════════════════════════════════
+  const targetRes = presetToResolution(preset);
+  // @ts-ignore
+  const plan = analyzeTimeline(tracks, [], rangeStart, rangeEnd, targetRes);
+
   onLog(`📊 Render Plan: ${plan.segments.length}개 구간`);
   for (const seg of plan.segments) {
-    const dur = (seg.endTime - seg.startTime).toFixed(1);
-    onLog(`  [${seg.startTime.toFixed(1)}s~${seg.endTime.toFixed(1)}s] `
-      + `${seg.type} (${dur}s) — ${seg.reasons.join(', ')}`);
+    const d = (seg.endTime - seg.startTime).toFixed(1);
+    onLog(`  [${seg.startTime.toFixed(1)}s~${seg.endTime.toFixed(1)}s] ${seg.type} (${d}s) — ${(seg.reasons || []).join(', ')}`);
   }
-  onLog(`  ⚡ passthrough: ${plan.passthroughDuration.toFixed(1)}s`
-    + ` | transcode: ${plan.transcodeDuration.toFixed(1)}s`
-    + ` | composite: ${plan.compositeDuration.toFixed(1)}s`);
+  onLog(`⚡ passthrough: ${plan.passthroughDuration.toFixed(1)}s | composite: ${plan.compositeDuration.toFixed(1)}s`);
 
-  /* ── 2. 최적화: 전체가 단일 타입이면 기존 경로 직접 호출 ── */
+  // ═══ 2. Open Source File ══════════════════════════════════════════════════
+  const vidTrackData = tracks.find((t: any) => t.type === 'video' && !t.muted);
+  if (!vidTrackData?.clips?.length) throw new Error('내보낼 비디오 클립이 없습니다');
 
-  // 비디오 클립 수집 (기존 로직 유지)
-  const videoClips: { clip: Clip; asset: Asset }[] = [];
-  for (const track of project.tracks) {
-    if (track.type !== 'video') continue;
-    const sorted = [...track.clips].sort((a, b) => a.startTime - b.startTime);
-    for (const clip of sorted) {
-      if (clip.disabled) continue;
-      const clipEnd = clip.startTime + clip.duration;
-      if (clipEnd <= rangeStart || clip.startTime >= rangeEnd) continue;
-      const asset = project.assets.find(a => a.id === clip.assetId);
-      if (!asset?.src) continue;
-      videoClips.push({ clip, asset });
-    }
-  }
+  const mainClip = vidTrackData.clips[0];
+  const srcUrl = mainClip.asset?.src || mainClip.src || mainClip.url;
+  if (!srcUrl) throw new Error('소스 비디오 URL을 찾을 수 없습니다');
 
-  if (videoClips.length === 0) {
-    throw new Error('내보낼 비디오 클립이 없습니다.');
-  }
+  const srcBlob = await fetchAsBlob(srcUrl);
+  const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(srcBlob) });
+  const vTrack = await input.getPrimaryVideoTrack() as any;
+  const aTrack = await input.getPrimaryAudioTrack() as any;
+  if (!vTrack) throw new Error('소스에 비디오 트랙이 없습니다');
 
-  // 텍스트 오버레이 준비
-  const textTracks = project.tracks.filter(t => t.type === 'text');
-  const textOverlays = collectTextOverlays(textTracks, rangeStart, rangeEnd);
-  const hasText = textOverlays.length > 0;
-  if (hasText) {
-    onLog(`텍스트 오버레이 ${textOverlays.length}개 준비 완료`);
-  }
+  const srcW = vTrack.displayWidth;
+  const srcH = vTrack.displayHeight;
+  const srcVCodec = vTrack.codecName;
+  const srcACodec = aTrack?.codecName;
 
-  /* ── 4. 복수 구간: Render Plan 기반 구간별 처리 ── */
-  onLog(`🔀 구간별 분리 처리 시작 (${plan.segments.length}개)`);
+  onLog(`📐 소스: ${srcW}x${srcH} (${srcVCodec}), 오디오: ${srcACodec}`);
 
-  const segmentBlobs: Blob[] = [];
-  const totalDur = plan.totalDuration;
+  // ═══ 3. Resolution / Codec ════════════════════════════════════════════════
+  const target = presetToResolution(preset);
+  const srcSmaller = srcW <= target.width && srcH <= target.height;
+  const outW = srcSmaller ? srcW : target.width;
+  const outH = srcSmaller ? srcH : target.height;
 
-  for (let si = 0; si < plan.segments.length; si++) {
-    const seg = plan.segments[si];
-    const segDur = seg.endTime - seg.startTime;
-    if (segDur < 0.01) continue;
+  onLog(`📐 출력: ${outW}x${outH} (${srcSmaller ? '원본 유지' : '다운스케일'})`);
 
-    const absStart = rangeStart + seg.startTime;
-    const absEnd = rangeStart + seg.endTime;
+  const codecStr = await vTrack.getCodecParameterString();
+  const vDecCfg = await vTrack.getDecoderConfig();
+  const aDecCfg = aTrack ? await aTrack.getDecoderConfig() : null;
+  if (!codecStr || !vDecCfg) throw new Error('코덱 정보를 가져올 수 없습니다');
 
-    onLog(`── 구간 ${si + 1}/${plan.segments.length}: `
-      + `[${seg.startTime.toFixed(1)}s~${seg.endTime.toFixed(1)}s] ${seg.type}`);
+  onLog(`🔧 코덱: ${codecStr} | HW: prefer-hardware`);
 
-    if (seg.type === 'passthrough' || seg.type === 'transcode') {
-      // 이 구간에 해당하는 비디오 클립 찾기
-      const segClips = videoClips.filter(vc => {
-        const cs = vc.clip.startTime;
-        const ce = cs + vc.clip.duration;
-        return ce > absStart && cs < absEnd;
-      });
+  // FPS 추정
+  const stats = await vTrack.computePacketStats(100);
+  const fps = stats.averagePacketRate || 30;
+  onLog(`🎬 FPS: ${fps.toFixed(1)}`);
 
-      if (segClips.length === 0) continue;
-
-      // 이 구간만의 opts 생성 (텍스트 없음)
-      const segOpts: WebCodecExportOptions = {
-        ...opts,
-        rangeStart: absStart,
-        rangeEnd: absEnd,
-        onProgress: (p) => {
-          const segWeight = segDur / totalDur;
-          const basePercent = (seg.startTime / totalDur) * 90;
-          const segPercent = basePercent + (p.percent / 100) * segWeight * 90;
-          onProgress({
-            ...p,
-            percent: Math.round(5 + segPercent),
-            message: `구간 ${si + 1}/${plan.segments.length} ${seg.type} — ${p.message}`,
-          });
-        },
-        onLog: (msg) => onLog(`  [${seg.type}] ${msg}`),
-      };
-
-      // passthrough/transcode → 텍스트 없이 exportSingleClip
-      const segBlob = await exportSingleClip(segClips[0], segOpts, [], performance.now());
-      segmentBlobs.push(segBlob);
-
-    } else {
-      // composite → 텍스트 포함 exportSingleClip
-      const segClips = videoClips.filter(vc => {
-        const cs = vc.clip.startTime;
-        const ce = cs + vc.clip.duration;
-        return ce > absStart && cs < absEnd;
-      });
-
-      if (segClips.length === 0) {
-        // 갭 구간 (비디오 없음) → 건너뜀 (검은 화면 생략)
-        onLog(`  ⏭ 갭 구간 생략 (${segDur.toFixed(1)}s)`);
-        continue;
-      }
-
-      // 이 구간에 해당하는 텍스트 오버레이만 필터링
-      const segTextOverlays = collectTextOverlays(textTracks, absStart, absEnd);
-
-      const segOpts: WebCodecExportOptions = {
-        ...opts,
-        rangeStart: absStart,
-        rangeEnd: absEnd,
-        onProgress: (p) => {
-          const segWeight = segDur / totalDur;
-          const basePercent = (seg.startTime / totalDur) * 90;
-          const segPercent = basePercent + (p.percent / 100) * segWeight * 90;
-          onProgress({
-            ...p,
-            percent: Math.round(5 + segPercent),
-            message: `구간 ${si + 1}/${plan.segments.length} composite — ${p.message}`,
-          });
-        },
-        onLog: (msg) => onLog(`  [composite] ${msg}`),
-      };
-
-      const segBlob = await exportSingleClip(segClips[0], segOpts, segTextOverlays, performance.now());
-      segmentBlobs.push(segBlob);
-    }
-  }
-
-  /* ── 5. 세그먼트 concat ── */
-  if (segmentBlobs.length === 0) {
-    throw new Error('처리된 구간이 없습니다.');
-  }
-
-  if (segmentBlobs.length === 1) {
-    const elapsed = performance.now() - t0;
-    const speed = (totalDur / (elapsed / 1000)).toFixed(1);
-    onLog(`✅ 완료: ${(segmentBlobs[0].size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(elapsed)} (${speed}x)`);
-    onProgress({
-      phase: 'done', percent: 100, elapsedMs: elapsed,
-      estimatedRemainingMs: 0,
-      message: `✅ 완료! ${(segmentBlobs[0].size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(elapsed)} (${speed}x)`,
-    });
-    return segmentBlobs[0];
-  }
-
-  // 다중 세그먼트 → Mediabunny Conversion으로 concat
-  onLog(`🔗 ${segmentBlobs.length}개 세그먼트 연결 중…`);
-  onProgress({
-    phase: 'encoding', percent: 92, elapsedMs: performance.now() - t0,
-    estimatedRemainingMs: 0, message: '세그먼트 연결 중…',
-  });
-
-  // 각 세그먼트를 순차적으로 Input → Conversion(transmux)
-  // Mediabunny는 concat API가 없으므로, CanvasSource로 프레임 합치기
-  // 더 효율적인 방법: 각 세그먼트의 원시 스트림을 이어붙이기
-  // 현재는 간단하게 첫 세그먼트만 반환 (concat은 향후 개선)
-  // TODO: 세그먼트별 concat 구현
-
-  // 임시: 가장 큰 세그먼트 반환 (대부분 passthrough 구간)
-  let largest = segmentBlobs[0];
-  for (const b of segmentBlobs) {
-    if (b.size > largest.size) largest = b;
-  }
-
-  const elapsed = performance.now() - t0;
-  const speed = (totalDur / (elapsed / 1000)).toFixed(1);
-
-  // 전체 Blob 합치기 (단순 연결 — 임시)
-  const totalSize = segmentBlobs.reduce((s, b) => s + b.size, 0);
-  onLog(`✅ 구간별 완료: 총 ${(totalSize / 1024 / 1024).toFixed(1)} MB · ${fmtTime(elapsed)} (${speed}x)`);
-  onLog(`⚠️ concat 미구현: 가장 큰 세그먼트(${(largest.size / 1024 / 1024).toFixed(1)} MB) 반환`);
-  onProgress({
-    phase: 'done', percent: 100, elapsedMs: elapsed,
-    estimatedRemainingMs: 0,
-    message: `✅ 완료! ${fmtTime(elapsed)} (${speed}x)`,
-  });
-
-  return largest;
-}
-
-/**
- * 같은 소스에서 잘라낸 다중 클립: 
- * 전체 범위를 Conversion API로 처리하되, 
- * 클립 사이 구간(갭)은 process에서 검은 화면으로 대체
- */
-async function exportSameSourceMultiClip(
-  videoClips: { clip: Clip; asset: Asset }[],
-  opts: WebCodecExportOptions,
-  textOverlays: TextOverlay[],
-  t0: number,
-): Promise<Blob> {
-  const { preset, rangeStart, rangeEnd, onProgress, onLog } = opts;
-  const { asset } = videoClips[0];
-  const hasText = textOverlays.length > 0;
-
-  // 클립들의 활성 구간 계산 (타임라인 기준)
-  const activeRanges = videoClips.map(vc => ({
-    start: Math.max(vc.clip.startTime, rangeStart) - rangeStart, // 상대 시간
-    end: Math.min(vc.clip.startTime + vc.clip.duration, rangeEnd) - rangeStart,
-    ss: (vc.clip.inPoint || 0) + (Math.max(vc.clip.startTime, rangeStart) - vc.clip.startTime),
-  }));
-
-  // 소스 파일의 실제 트림 범위 (가장 이른 시작 ~ 가장 늦은 끝)
-  const srcStart = Math.min(...activeRanges.map(r => r.ss));
-  const srcEnd = Math.max(...activeRanges.map((r, i) => {
-    const vc = videoClips[i];
-    const clipStart = Math.max(vc.clip.startTime, rangeStart);
-    const clipEnd = Math.min(vc.clip.startTime + vc.clip.duration, rangeEnd);
-    return (vc.clip.inPoint || 0) + (clipEnd - vc.clip.startTime);
-  }));
-
-  onLog(`소스 트림: ${srcStart.toFixed(2)}s ~ ${srcEnd.toFixed(2)}s`);
-  onLog(`활성 클립 ${activeRanges.length}개`);
-
-  const blob = await fetchAsBlob(asset.src);
-  const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(blob) });
-  const output = new Output({
-    format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
-    target: new BufferTarget(),
-  });
-
-  // 클립 활성 여부 판별 함수 (소스 타임스탬프 기준)
-  function isInActiveClip(srcTimestamp: number): boolean {
-    for (const vc of videoClips) {
-      const clipSrcStart = (vc.clip.inPoint || 0);
-      const clipSrcEnd = clipSrcStart + vc.clip.duration;
-      if (srcTimestamp >= clipSrcStart - 0.02 && srcTimestamp <= clipSrcEnd + 0.02) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  let ctx: OffscreenCanvasRenderingContext2D | null = null;
-
-  const conversionOpts: any = {
-    input,
-    output,
-    trim: { start: srcStart, end: srcEnd },
-    video: {
-      width: preset.width,
-      height: preset.height,
-      fit: 'contain',
-      frameRate: preset.fps,
-      codec: 'avc',
-      bitrate: presetToBitrate(preset),
-      hardwareAcceleration: 'prefer-hardware',
-      process: (sample: VideoSample) => {
-        if (!ctx) {
-          const canvas = new OffscreenCanvas(preset.width, preset.height);
-          ctx = canvas.getContext('2d')!;
-        }
-        ctx.clearRect(0, 0, preset.width, preset.height);
-
-        // 클립 활성 구간이면 프레임 그리기, 아니면 검은 화면
-        if (isInActiveClip(sample.timestamp)) {
-          sample.draw(ctx, 0, 0, preset.width, preset.height);
-        }
-        // else: 검은 화면 유지 (갭 구간)
-
-        // 텍스트 오버레이
-        if (hasText) {
-          // 소스 타임스탬프 → 타임라인 상대 시간 변환
-          const timelineTime = sample.timestamp - srcStart;
-          drawTextOverlays(ctx, textOverlays, timelineTime, preset.width, preset.height);
-        }
-
-        return ctx.canvas;
-      },
-    },
-    audio: {
-      codec: 'aac',
-      bitrate: presetToAudioBitrate(preset),
-    },
-  };
-
-  const conversion: any = await Conversion.init(conversionOpts);
-
-  if (conversion.isValid === false) {
-    const reasons = (conversion.discardedTracks || [])
-      .map((dt: any) => `${dt.track}: ${dt.reason}`)
-      .join(', ');
-    throw new Error(`변환 불가: ${reasons}`);
-  }
-
-  conversion.onProgress = (progress: number) => {
-    const elapsed = performance.now() - t0;
-    const pct = Math.round(10 + progress * 85);
-    const remaining = pct > 5 ? (elapsed / pct) * (100 - pct) : 0;
-    onProgress({
-      phase: 'encoding', percent: pct, elapsedMs: elapsed,
-      estimatedRemainingMs: remaining,
-      message: `인코딩 중… ${pct}% (HW 가속/통합)`,
-    });
-  };
-
-  await conversion.execute();
-
-  const buffer = (output.target as any).buffer!;
-  if (!buffer) throw new Error('출력 버퍼가 비어있습니다.');
-
-  const result = new Blob([buffer], { type: 'video/mp4' });
-  const elapsed = performance.now() - t0;
-  const totalDur = srcEnd - srcStart;
-  const speed = (totalDur / (elapsed / 1000)).toFixed(1);
-  onLog(`✅ 완료: ${(result.size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(elapsed)} (${speed}x 실시간)`);
-  onProgress({
-    phase: 'done', percent: 100, elapsedMs: elapsed,
-    estimatedRemainingMs: 0,
-    message: `✅ 완료! ${(result.size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(elapsed)} (${speed}x)`,
-  });
-
-  return result;
-}
-
-async function exportSingleClip(
-  vc: { clip: Clip; asset: Asset },
-  opts: WebCodecExportOptions,
-  textOverlays: TextOverlay[],
-  t0: number,
-): Promise<Blob> {
-  const { preset, rangeStart, rangeEnd, onProgress, onLog } = opts;
-  const { clip, asset } = vc;
-  const hasText = textOverlays.length > 0;
-
-  onLog(`🚀 WebCodecs 시작: ${asset.name} (${preset.width}x${preset.height})`);
-  onProgress({
-    phase: 'loading', percent: 5, elapsedMs: 0,
-    estimatedRemainingMs: 0, message: '소스 파일 로딩 중…',
-  });
-
-  // asset.src를 Blob으로 변환
-  const blob = await fetchAsBlob(asset.src);
-
-  // Mediabunny Input
-  const input = new Input({
-    formats: ALL_FORMATS,
-    source: new BlobSource(blob),
-  });
-
-  // Mediabunny Output
-  const output = new Output({
-    format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
-    target: new BufferTarget(),
-  });
-
-  // 트림 범위 계산
-  const clipStart = Math.max(clip.startTime, rangeStart);
-  const clipEnd = Math.min(clip.startTime + clip.duration, rangeEnd);
-  const ss = (clip.inPoint || 0) + (clipStart - clip.startTime);
-  const dur = clipEnd - clipStart;
-
-  // ★ 핵심: 소스 해상도/코덱 확인하여 transmux 가능 여부 판단
-  const videoTrack = await input.getPrimaryVideoTrack() as any;
-  const srcW = videoTrack?.displayWidth ?? 0;
-  const srcH = videoTrack?.displayHeight ?? 0;
-  
-  const sizesMatch = (
-    (Math.abs(srcW - preset.width) <= 2 && Math.abs(srcH - preset.height) <= 2) ||
-    (Math.abs(srcW - preset.height) <= 2 && Math.abs(srcH - preset.width) <= 2)
+  // ═══ 4. 전체 Passthrough → Transmux Fast Path ════════════════════════════
+  const hasComposite = plan.segments.some(
+    (s) => s.type === 'composite' || s.type === 'transcode',
   );
-  let needsResize = !sizesMatch;
-  onLog(`📐 소스: ${srcW}x${srcH}, 타겟: ${preset.width}x${preset.height}, resize=${needsResize}`);
 
-  // ★ 소스가 타겟보다 작으면 업스케일 불필요 → transmux로 전환
-  if (needsResize && !hasText && srcW > 0 && srcH > 0 
-      && srcW <= preset.width && srcH <= preset.height) {
-    onLog(`⚡ 업스케일 불필요: 소스(${srcW}x${srcH})가 타겟보다 작음 → transmux로 전환`);
-    needsResize = false;
+  if (!hasComposite && srcSmaller) {
+    onLog('⚡ 모든 구간 passthrough → Transmux 모드');
+    return transmuxFastPath(input, rangeStart, rangeEnd, onProgress, onLog, t0);
   }
 
-  const needsTranscode = hasText || needsResize;
+  // ═══ 5. Smart Render: 단일 Output + 혼합 패킷 주입 ═══════════════════════
+  onLog('🔧 스마트 렌더링 모드 진입');
 
-  if (needsTranscode) {
-    onLog(`트랜스코딩 모드: resize=${needsResize}, text=${hasText}`);
-  } else {
-    onLog(`⚡ Transmux 모드: 동일 해상도 (${srcW}x${srcH}), 텍스트 없음 → 미디어 직접 복사`);
+  const outFmt = new Mp4OutputFormat({ fastStart: 'in-memory' });
+  const bufTarget = new BufferTarget();
+  const output = new Output({ format: outFmt, target: bufTarget });
+
+  // Video source — 모든 패킷이 여기로 합류
+  const vPktSrc = new EncodedVideoPacketSource(srcVCodec!);
+  output.addVideoTrack(vPktSrc);
+
+  // Audio source
+  let aPktSrc: EncodedAudioPacketSource | null = null;
+  if (aTrack && srcACodec) {
+    aPktSrc = new EncodedAudioPacketSource(srcACodec);
+    output.addAudioTrack(aPktSrc);
   }
-
-  onLog(`트림: ss=${ss.toFixed(2)}s, dur=${dur.toFixed(2)}s`);
-  onProgress({
-    phase: 'encoding', percent: 10, elapsedMs: performance.now() - t0,
-    estimatedRemainingMs: 0, message: needsTranscode ? '트랜스코딩 준비…' : 'Transmux 준비…',
-  });
-
-  // Canvas for text overlay
-  let ctx: OffscreenCanvasRenderingContext2D | null = null;
-
-  const conversionOpts: any = {
-    input,
-    output,
-    trim: { start: ss, end: ss + dur },
-    audio: needsTranscode
-      ? { codec: 'aac', bitrate: presetToAudioBitrate(preset) }
-      : {},  // transmux: 오디오도 직접 복사
-  };
-
-  if (needsTranscode) {
-    // 재인코딩 필요한 경우만 video 옵션 지정
-    conversionOpts.video = {
-      width: preset.width,
-      height: preset.height,
-      fit: 'contain',
-      frameRate: preset.fps,
-      codec: 'avc',
-      bitrate: presetToBitrate(preset),
-      hardwareAcceleration: 'prefer-hardware',
-      ...(hasText ? {
-        process: (sample: VideoSample) => {
-          if (!ctx) {
-            const canvas = new OffscreenCanvas(preset.width, preset.height);
-            ctx = canvas.getContext('2d')!;
-          }
-          ctx.clearRect(0, 0, preset.width, preset.height);
-          sample.draw(ctx, 0, 0, preset.width, preset.height);
-
-          // 텍스트 오버레이 합성
-          drawTextOverlays(ctx, textOverlays, sample.timestamp - ss, preset.width, preset.height);
-
-          return ctx.canvas;
-        },
-      } : {}),
-    };
-  }
-  // needsTranscode === false 이면 video 옵션을 아예 안 줌
-  // → Mediabunny가 자동으로 transmux (직접 복사)
-
-  const conversion: any = await Conversion.init(conversionOpts);
-
-  if (conversion.isValid === false) {
-    const reasons = (conversion.discardedTracks || [])
-      .map((dt: any) => `${dt.track}: ${dt.reason}`)
-      .join(', ');
-    throw new Error(`변환 불가: ${reasons}`);
-  }
-
-  // 진행 상황 모니터링
-  conversion.onProgress = (progress: number) => {
-    const elapsed = performance.now() - t0;
-    const pct = Math.round(10 + progress * 85);
-    const remaining = pct > 5 ? (elapsed / pct) * (100 - pct) : 0;
-    onProgress({
-      phase: 'encoding', percent: pct, elapsedMs: elapsed,
-      estimatedRemainingMs: remaining,
-      message: needsTranscode
-        ? `트랜스코딩 중… ${pct}% (HW 가속)`
-        : `Transmux 중… ${pct}% (직접 복사)`,
-    });
-  };
-
-  await conversion.execute();
-
-  const buffer = (output.target as any).buffer!;
-  if (!buffer) throw new Error('출력 버퍼가 비어있습니다.');
-  
-  const result = new Blob([buffer], { type: 'video/mp4' });
-
-  const elapsed = performance.now() - t0;
-  const speed = (dur / (elapsed / 1000)).toFixed(1);
-  onLog(`✅ 완료: ${(result.size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(elapsed)} (${speed}x 실시간)`);
-  onProgress({
-    phase: 'done', percent: 100, elapsedMs: elapsed,
-    estimatedRemainingMs: 0,
-    message: `✅ 완료! ${(result.size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(elapsed)} (${speed}x)`,
-  });
-
-  return result;
-}
-
-async function exportMultiClip(
-  videoClips: { clip: Clip; asset: Asset }[],
-  opts: WebCodecExportOptions,
-  textOverlays: TextOverlay[],
-  t0: number,
-): Promise<Blob> {
-  const { preset, rangeStart, rangeEnd, onProgress, onLog } = opts;
-  const hasText = textOverlays.length > 0;
-
-  onLog(`🚀 WebCodecs: 다중 클립 (${videoClips.length}개) 인코딩 시작`);
-
-  const {
-    Output: MBOutput,
-    Mp4OutputFormat: MBMp4,
-    BufferTarget: MBBuffer,
-    CanvasSource: MBCanvasSource,
-    VideoSampleSink,
-  } = await import('mediabunny');
-
-  const canvas = new OffscreenCanvas(preset.width, preset.height);
-  const ctx = canvas.getContext('2d')!;
-
-  const output = new MBOutput({
-    format: new MBMp4({ fastStart: 'in-memory' }),
-    target: new MBBuffer(),
-  });
-
-  const videoSource = new MBCanvasSource(canvas, {
-    codec: 'avc',
-    bitrate: presetToBitrate(preset),
-    hardwareAcceleration: 'prefer-hardware',
-    width: preset.width,
-    height: preset.height,
-  } as any);
-  output.addVideoTrack(videoSource, { frameRate: preset.fps });
 
   await output.start();
 
-  let globalTime = 0;
-  const frameDur = 1 / preset.fps;
+  // Sinks (소스에서 읽기)
+  const vPktSink = new EncodedPacketSink(vTrack);
+  const aPktSink = aTrack ? new EncodedPacketSink(aTrack) : null;
+  const vSampleSink = new VideoSampleSink(vTrack);
 
-  for (let i = 0; i < videoClips.length; i++) {
-    const { clip, asset } = videoClips[i];
-    const clipStart = Math.max(clip.startTime, rangeStart);
-    const clipEnd = Math.min(clip.startTime + clip.duration, rangeEnd);
-    const ss = (clip.inPoint || 0) + (clipStart - clip.startTime);
-    const dur = clipEnd - clipStart;
-    if (dur <= 0.01) continue;
+  // Composite 인코더 (lazy)
+  let encoder: ManualVideoEncoder | null = null;
+  const canvas = new OffscreenCanvas(outW, outH);
+  const ctx = canvas.getContext('2d')!;
 
-    onLog(`클립 ${i + 1}/${videoClips.length}: ${asset.name} (${dur.toFixed(1)}s)`);
-    onProgress({
-      phase: 'encoding',
-      percent: Math.round(10 + (i / videoClips.length) * 80),
-      elapsedMs: performance.now() - t0,
-      estimatedRemainingMs: 0,
-      message: `세그먼트 ${i + 1}/${videoClips.length} (HW 가속)…`,
-    });
+  let isFirstV = true;
+  let isFirstA = true;
+  let done = 0;
 
-    try {
-      const blob = await fetchAsBlob(asset.src);
-      const clipInput = new Input({
-        formats: ALL_FORMATS,
-        source: new BlobSource(blob),
-      });
+  // ═══ 6. 세그먼트 순차 처리 ═══════════════════════════════════════════════
+  for (let i = 0; i < plan.segments.length; i++) {
+    if (abortSignal?.aborted) throw new Error('내보내기 취소됨');
 
-      const videoTrack = await clipInput.getPrimaryVideoTrack();
-      if (!videoTrack) continue;
+    const seg = plan.segments[i];
+    const segDur = seg.endTime - seg.startTime;
 
-      const decodable = await videoTrack.canDecode();
-      if (!decodable) {
-        onLog(`⚠️ 클립 ${i + 1} 디코딩 불가 — 건너뜀`);
+    onLog(`📦 [${i + 1}/${plan.segments.length}] ${seg.type} ${seg.startTime.toFixed(1)}~${seg.endTime.toFixed(1)}s (${segDur.toFixed(1)}s)`);
+
+    // ────── PASSTHROUGH ──────────────────────────────────────────────────
+    if (seg.type === 'passthrough') {
+      // Video packets
+      const startKP = await vPktSink.getKeyPacket(seg.startTime, { verifyKeyPackets: true });
+      if (!startKP) {
+        onLog(`  ⚠️ 키프레임 없음 @${seg.startTime.toFixed(2)}s — skip`);
+        done += segDur;
         continue;
       }
 
-      const sink = new VideoSampleSink(videoTrack);
+      let vc = 0;
+      for await (const pkt of vPktSink.packets(startKP)) {
+        if (pkt.timestamp < seg.startTime - 0.001) continue;
+        if (pkt.timestamp >= seg.endTime) break;
+        await vPktSrc.add(pkt, isFirstV ? buildVideoMeta(vDecCfg, codecStr) : undefined);
+        isFirstV = false;
+        vc++;
+      }
+      onLog(`  📹 ${vc} video packets copied`);
 
-      for await (const sample of sink.samples(ss, ss + dur)) {
-        ctx.clearRect(0, 0, preset.width, preset.height);
-        sample.draw(ctx, 0, 0, preset.width, preset.height);
+      // Audio packets
+      if (aPktSink && aPktSrc && aDecCfg) {
+        const aStart = await aPktSink.getPacket(seg.startTime);
+        let ac = 0;
+        if (aStart) {
+          for await (const pkt of aPktSink.packets(aStart)) {
+            if (pkt.timestamp < seg.startTime - 0.01) continue;
+            if (pkt.timestamp >= seg.endTime) break;
+            await aPktSrc.add(pkt, isFirstA ? buildAudioMeta(aDecCfg) : undefined);
+            isFirstA = false;
+            ac++;
+          }
+        }
+        onLog(`  🔊 ${ac} audio packets copied`);
+      }
 
-        if (hasText) {
-          const absoluteTime = clipStart - rangeStart + (sample.timestamp - ss);
-          drawTextOverlays(ctx, textOverlays, absoluteTime, preset.width, preset.height);
+    // ────── COMPOSITE / TRANSCODE ────────────────────────────────────────
+    } else {
+      const hasVideo = seg.videoClips && seg.videoClips.length > 0;
+
+      if (!hasVideo) {
+        // ── Gap: 검은 프레임 ──
+        const gapEnc = new ManualVideoEncoder({
+          codec: codecStr,
+          width: outW,
+          height: outH,
+          bitrate: videoBitrate,
+          fps,
+        });
+        const fd = 1 / fps;
+        let gc = 0;
+        for (let t = seg.startTime; t < seg.endTime; t += fd) {
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, outW, outH);
+          const frame = new VideoFrame(canvas, {
+            timestamp: Math.round(t * 1e6),
+            duration: Math.round(Math.min(fd, seg.endTime - t) * 1e6),
+          });
+          const pkts = await gapEnc.encode(frame);
+          for (const { packet } of pkts) {
+            await vPktSrc.add(packet, isFirstV ? buildVideoMeta(vDecCfg, codecStr) : undefined);
+            isFirstV = false;
+          }
+          gc++;
+        }
+        const rem = await gapEnc.flush();
+        for (const { packet } of rem) await vPktSrc.add(packet);
+        gapEnc.close();
+        onLog(`  ⬛ ${gc} 검은 프레임`);
+
+      } else {
+        // ── Composite: 디코드 → Canvas → 인코드 ──
+        if (!encoder) {
+          encoder = new ManualVideoEncoder({
+            codec: codecStr,
+            width: outW,
+            height: outH,
+            bitrate: videoBitrate,
+            fps,
+            keyFrameIntervalSec: 5,
+          });
+          onLog(`  🔧 VideoEncoder: ${codecStr} ${outW}x${outH} @${(videoBitrate / 1e6).toFixed(1)}Mbps HW`);
         }
 
-        await videoSource.add(globalTime, frameDur);
-        globalTime += frameDur;
+        let fc = 0;
+        for await (const sample of vSampleSink.samples(seg.startTime, seg.endTime)) {
+          // 원본 프레임 → 캔버스
+          ctx.clearRect(0, 0, outW, outH);
+          // @ts-ignore
+          sample.draw(ctx, 0, 0, outW, outH);
+
+          // 텍스트 오버레이
+          const overlays = collectTextOverlays(tracks, sample.timestamp);
+          if (overlays.length > 0) {
+            drawTextOverlays(ctx, overlays, outW, outH);
+          }
+
+          // 캔버스 → VideoFrame → encode
+          const frame = new VideoFrame(canvas, {
+            timestamp: Math.round(sample.timestamp * 1e6),
+            duration: Math.round(sample.duration * 1e6),
+          });
+          sample.close();
+
+          const pkts = await encoder.encode(frame);
+          for (const { packet } of pkts) {
+            await vPktSrc.add(
+              packet,
+              isFirstV ? buildVideoMeta(vDecCfg, codecStr) : undefined,
+            );
+            isFirstV = false;
+          }
+          fc++;
+        }
+        onLog(`  📹 ${fc} frames 인코딩됨 (composite)`);
+
+        // 오디오 — 항상 passthrough
+        if (aPktSink && aPktSrc && aDecCfg) {
+          const aStart = await aPktSink.getPacket(seg.startTime);
+          let ac = 0;
+          if (aStart) {
+            for await (const pkt of aPktSink.packets(aStart)) {
+              if (pkt.timestamp < seg.startTime - 0.01) continue;
+              if (pkt.timestamp >= seg.endTime) break;
+              await aPktSrc.add(pkt, isFirstA ? buildAudioMeta(aDecCfg) : undefined);
+              isFirstA = false;
+              ac++;
+            }
+          }
+          onLog(`  🔊 ${ac} audio packets copied`);
+        }
       }
-    } catch (err: any) {
-      onLog(`⚠️ 클립 ${i + 1} 처리 중 오류: ${err.message}`);
     }
+
+    done += segDur;
+    onProgress({
+      phase: 'encoding',
+      percent: Math.round(Math.min(99, (done / totalDur) * 100)),
+      message: `${Math.round(Math.min(99, (done / totalDur) * 100))}%`,
+      elapsedMs: performance.now() - t0,
+    });
   }
+
+  // ═══ 7. Finalize ═════════════════════════════════════════════════════════
+  if (encoder) {
+    const rem = await encoder.flush();
+    for (const { packet } of rem) await vPktSrc.add(packet);
+    encoder.close();
+  }
+
+  vPktSrc.close();
+  aPktSrc?.close();
 
   await output.finalize();
 
-  const buffer = (output.target as any).buffer!;
-  if (!buffer) throw new Error('출력 버퍼 생성 실패');
+  const elapsed = performance.now() - t0;
+  // @ts-ignore
+  const resultBuf = bufTarget.buffer;
+  if (!resultBuf) throw new Error('출력 버퍼가 비어있습니다.');
   
-  const result = new Blob([buffer], { type: 'video/mp4' });
+  const blob = new Blob([resultBuf], { type: 'video/mp4' });
+  const mb = (blob.size / 1048576).toFixed(1);
+  const speed = (totalDur / (elapsed / 1000)).toFixed(1);
 
-  onLog(`✅ 완료: ${(result.size / 1024 / 1024).toFixed(1)} MB · ${fmtTime(performance.now() - t0)}`);
+  onLog(`✅ 완료: ${mb} MB · ${fmtTime(elapsed)} (${speed}x 실시간)`);
+  onLog(`📊 Passthrough: ${plan.passthroughDuration.toFixed(1)}s | Re-encoded: ${(plan.compositeDuration + plan.transcodeDuration).toFixed(1)}s`);
   onProgress({
-    phase: 'done', percent: 100, elapsedMs: performance.now() - t0,
-    estimatedRemainingMs: 0,
-    message: `✅ 완료! ${(result.size / 1024 / 1024).toFixed(1)} MB`,
+    phase: 'done',
+    percent: 100,
+    message: '100%',
+    elapsedMs: elapsed,
   });
 
-  return result;
+  input.dispose();
+  return blob;
 }
 
-/* ═══ 유틸리티 ═══ */
+// ─── Transmux Fast Path ──────────────────────────────────────────────────────
 
-async function fetchAsBlob(src: string): Promise<Blob> {
-  if (src.startsWith('blob:') || src.startsWith('data:')) {
-    const res = await fetch(src);
-    return res.blob();
+async function transmuxFastPath(
+  input: Input,
+  rangeStart: number,
+  rangeEnd: number,
+  onProgress: (p: any) => void,
+  onLog: (m: string) => void,
+  t0: number,
+): Promise<Blob> {
+  const outFmt = new Mp4OutputFormat({ fastStart: 'in-memory' });
+  const bufTarget = new BufferTarget();
+  const output = new Output({ format: outFmt, target: bufTarget });
+
+  const conv = await Conversion.init({
+    input,
+    output,
+    trim: { start: rangeStart, end: rangeEnd },
+  });
+
+  if (!(conv as any).isValid) {
+    const reasons = (conv as any).discardedTracks.map((t: any) => `${t.track?.type}: ${t.reason}`).join(', ');
+    onLog(`⚠️ 트랙 제외: ${reasons}`);
   }
-  const res = await fetch(src);
-  return res.blob();
-}
 
-function fmtTime(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  (conv as any).onProgress = (p: number) => onProgress({
+    phase: 'encoding',
+    percent: Math.round(p * 100),
+    message: `${Math.round(p * 100)}%`,
+    elapsedMs: performance.now() - t0,
+  });
+  await (conv as any).execute();
+
+  const elapsed = performance.now() - t0;
+  // @ts-ignore
+  const resultBuf = bufTarget.buffer;
+  if (!resultBuf) throw new Error('출력 버퍼가 비어있습니다.');
+  
+  const blob = new Blob([resultBuf], { type: 'video/mp4' });
+  onLog(`✅ Transmux 완료: ${(blob.size / 1048576).toFixed(1)} MB · ${fmtTime(elapsed)} (${((rangeEnd - rangeStart) / (elapsed / 1000)).toFixed(1)}x)`);
+  onProgress({
+    phase: 'done',
+    percent: 100,
+    message: '100%',
+    elapsedMs: elapsed,
+  });
+  input.dispose();
+  return blob;
 }
