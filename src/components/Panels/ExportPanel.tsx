@@ -1,5 +1,5 @@
 /* ─── src/components/Panels/ExportPanel.tsx ─── */
-/* B7 v3.1: drawtext fontfile 수정 + 텍스트 없으면 필터 생략 */
+/* B7 v3.1: drawtext fontfile (.otf) 수정 + 다중 클립 인스턴스 재탐색 안정화 */
 
 import React, { useState, useCallback, useRef } from 'react';
 import { useEditorStore } from '@/stores/editorStore';
@@ -97,8 +97,7 @@ function fmtSize(bytes: number): string {
 }
 
 /**
- * ★ 핵심 수정: drawtext에 fontfile= 필수 추가
- * FFmpeg-WASM은 시스템 폰트가 없으므로 반드시 fontfile을 지정해야 함.
+ * 텍스트 클립 → drawtext 필터 문자열
  */
 function buildTextFilters(
   textTracks: Track[],
@@ -122,7 +121,7 @@ function buildTextFilters(
       // FFmpeg drawtext 특수문자 이스케이프
       const safeText = tc.text
         .replace(/\\/g, '\\\\\\\\')
-        .replace(/'/g, "\u2019")          // 스마트 따옴표로 대체 (가장 안전)
+        .replace(/'/g, "\u2019")
         .replace(/:/g, '\\\\:')
         .replace(/%/g, '%%')
         .replace(/\[/g, '\\\\[')
@@ -135,7 +134,6 @@ function buildTextFilters(
       const enableStart = Math.max(0, clip.startTime - rangeStart);
       const enableEnd = Math.min(rangeEnd - rangeStart, clipEnd - rangeStart);
 
-      // ★ fontfile= 반드시 포함
       let f = `drawtext=fontfile=${fontFile}`;
       f += `:text='${safeText}'`;
       f += `:fontsize=${fontSize}`;
@@ -231,14 +229,13 @@ export function ExportPanel(): React.ReactElement {
       setFfmpegReady(true);
       log('✅ FFmpeg 준비 완료');
 
-      // 폰트 로드 (자막 번인에 필수)
-      log('한글 폰트 로딩 중… (Noto Sans CJK KR)');
+      log('폰트 로딩 중… (Subset OTF)');
       const fontOk = await eng.loadFont();
       setFontReady(fontOk);
       if (fontOk) {
-        log('✅ 한글 폰트 로드 완료');
+        log('✅ 폰트 로드 완료');
       } else {
-        log('⚠️ 폰트 로드 실패 — 텍스트 오버레이 불가 (비디오만 내보내기 가능)');
+        log('⚠️ 폰트 로드 실패 — 텍스트 오버레이 건너뜀');
       }
     } catch (err: any) {
       log(`❌ 로드 실패: ${err.message || err}`);
@@ -286,19 +283,17 @@ export function ExportPanel(): React.ReactElement {
         } : prev);
       }
 
-      /* ── 텍스트 필터 (폰트가 있을 때만) ── */
+      /* ── 텍스트 필터 준비 ── */
       const textTracks = project.tracks.filter(t => t.type === 'text');
-      let textFilter = '';
+      let textFilterValue = '';
       if (fontReady && textTracks.length > 0) {
-        textFilter = buildTextFilters(
+        textFilterValue = buildTextFilters(
           textTracks, rangeStart, rangeEnd,
           preset.width, preset.height, FONT_FILENAME,
         );
-        if (textFilter) {
-          log(`텍스트 필터 생성됨 (${textFilter.split('drawtext').length - 1}개 자막)`);
+        if (textFilterValue) {
+          log(`텍스트 필터 생성됨 (${textFilterValue.split('drawtext').length - 1}개 자막)`);
         }
-      } else if (textTracks.some(t => t.clips.some(c => c.textContent && !c.disabled))) {
-        log('⚠️ 폰트 미로드 — 텍스트 오버레이를 건너뜁니다.');
       }
 
       eng.setProgressCallback((p) => {
@@ -316,6 +311,7 @@ export function ExportPanel(): React.ReactElement {
       });
 
       /* ── 2. 인코딩 ── */
+      let finalOutputData: Uint8Array | null = null;
 
       if (vClips.length === 1) {
         /* ═══ 단일 클립 ═══ */
@@ -331,15 +327,18 @@ export function ExportPanel(): React.ReactElement {
         const args = buildSingleClipArgs(inputFn, outFile, preset, {
           ss: ss > 0.01 ? ss : undefined,
           duration: dur,
-          textFilter: textFilter || undefined,
+          textFilter: textFilterValue || undefined,
         });
         log(`FFmpeg: ${args.join(' ')}`);
         await eng.exec(args);
+        
+        finalOutputData = await eng.readOutput(outFile);
+        await eng.cleanup(filesToClean);
 
       } else {
-        /* ═══ 다중 클립: 개별 인코딩 → concat demuxer ═══ */
-        log(`다중 클립 (${vClips.length}개)`);
-        const segFiles: string[] = [];
+        /* ═══ 다중 클립: 세그먼트 백업 → 새 인스턴스로 concat ═══ */
+        log(`다중 클립 (${vClips.length}개) 인코딩 시작…`);
+        const savedSegments: Uint8Array[] = [];
 
         for (let i = 0; i < vClips.length; i++) {
           const { clip, inputFn } = vClips[i];
@@ -350,7 +349,7 @@ export function ExportPanel(): React.ReactElement {
           if (dur <= 0.01) continue;
 
           const segFn = `seg${i}.mp4`;
-          log(`세그먼트 ${i}: ss=${ss.toFixed(2)} dur=${dur.toFixed(2)}`);
+          log(`세그먼트 ${i} 인코딩: ss=${ss.toFixed(2)} dur=${dur.toFixed(2)}`);
 
           setProgress(prev => prev ? {
             ...prev, phase: 'encoding',
@@ -358,58 +357,77 @@ export function ExportPanel(): React.ReactElement {
             message: `세그먼트 ${i + 1}/${vClips.length}…`,
           } : prev);
 
-          // ★ 세그먼트 단계에서는 텍스트 필터 미적용
-          //   (concat 후 텍스트 번인 — 시간 오프셋이 전체 타임라인 기준이므로)
           const segArgs = buildSingleClipArgs(inputFn, segFn, preset, {
             ss: ss > 0.01 ? ss : undefined,
             duration: dur,
           });
           await eng.exec(segArgs);
-          segFiles.push(segFn);
-          filesToClean.push(segFn);
+          
+          // 데이터 유실 방지를 위해 즉시 메모리 백업
+          const segData = await eng.readFileRaw(segFn);
+          if (!segData || segData.length < 100) {
+            throw new Error(`세그먼트 ${i} 생성 실패 (파일 없음)`);
+          }
+          savedSegments.push(segData);
+          log(`✅ seg${i}.mp4 (${fmtSize(segData.length)}) 백업 성공`);
         }
 
-        if (segFiles.length === 0) throw new Error('인코딩된 세그먼트가 없습니다.');
+        if (savedSegments.length === 0) throw new Error('인코딩된 세그먼트가 없습니다.');
 
-        // concat 리스트
-        const listContent = segFiles.map(f => `file '${f}'`).join('\n');
-        await eng.writeText('list.txt', listContent);
-        filesToClean.push('list.txt');
+        // 🔄 인스턴스 초기화 (WASM 메모리 파편화 및 Aborted 에러 회피)
+        log('🔄 concat: FFmpeg 인스턴스 재탐색 및 초기화…');
+        eng.terminate();
+        
+        const concatEng = createExportEngine();
+        await concatEng.init((msg) => log(msg));
+        
+        if (textFilterValue) {
+          log('폰트 재로드…');
+          await concatEng.loadFont();
+        }
 
-        log(`concat: ${segFiles.length}개 세그먼트 합치기…`);
+        // 백업된 세그먼트 복원
+        for (let i = 0; i < savedSegments.length; i++) {
+          await concatEng.writeRaw(`seg${i}.mp4`, savedSegments[i]);
+        }
+
+        // list.txt
+        const listContent = savedSegments.map((_, i) => `file 'seg${i}.mp4'`).join('\n');
+        await concatEng.writeText('list.txt', listContent);
+
+        log(`다중 세그먼트 (${savedSegments.length}개) 합치는 중… (Concat Demuxer)`);
         setProgress(prev => prev ? {
           ...prev, phase: 'concat', percent: 75, message: '세그먼트 합치기…',
         } : prev);
 
-        // ★ 텍스트가 없으면 -c copy (초고속), 있으면 재인코딩
         const concatArgs = buildConcatArgs('list.txt', outFile, {
-          streamCopy: !textFilter,
-          textFilter: textFilter || undefined,
-          preset: textFilter ? preset : undefined,
+          streamCopy: !textFilterValue,
+          textFilter: textFilterValue || undefined,
+          preset: textFilterValue ? preset : undefined,
         });
         log(`FFmpeg concat: ${concatArgs.join(' ')}`);
-        await eng.exec(concatArgs);
+        
+        await concatEng.exec(concatArgs);
+        
+        finalOutputData = await concatEng.readOutput(outFile);
+        
+        // 뒷정리
+        await concatEng.cleanup([...savedSegments.map((_, i) => `seg${i}.mp4`), 'list.txt', outFile]);
+        concatEng.terminate();
       }
 
       /* ── 3. 결과 ── */
-      setProgress(prev => prev ? {
-        ...prev, percent: 92, message: '결과 파일 읽기…',
-      } : prev);
-
-      const outputData = await eng.readOutput(outFile);
-      if (outputData.length === 0) {
-        throw new Error('0바이트 출력. FFmpeg 인코딩 실패 — 로그를 확인하세요.');
+      if (!finalOutputData || finalOutputData.length === 0) {
+        throw new Error('결과 파일이 비어있거나 생성되지 않았습니다.');
       }
 
-      await eng.cleanup(filesToClean);
-
-      const blob = new Blob([outputData as any], { type: `video/${preset.format}` });
+      const blob = new Blob([finalOutputData as any], { type: `video/${preset.format}` });
       const url = URL.createObjectURL(blob);
       setResultUrl(url);
       setResultSize(blob.size);
 
       const elapsed = performance.now() - t0;
-      log(`✅ 완료: ${fmtSize(blob.size)} · ${fmtTime(elapsed)}`);
+      log(`✅ 모든 과정 완료: ${fmtSize(blob.size)} · ${fmtTime(elapsed)}`);
       setProgress({
         phase: 'done', percent: 100,
         elapsedMs: elapsed, estimatedRemainingMs: 0,
@@ -424,10 +442,10 @@ export function ExportPanel(): React.ReactElement {
         elapsedMs: performance.now() - t0, estimatedRemainingMs: 0,
         message: `❌ ${err.message || err}`,
       });
-      try { await eng.cleanup(filesToClean); } catch { /* ignore */ }
+      // 예외 발생 시 엔진 종료 시도
+      try { eng.terminate(); } catch { /* ignore */ }
     }
 
-    eng.setProgressCallback(null);
     setExporting(false);
   }, [isPlaying, togglePlay, useInOut, inOut, project, preset, fontReady, log]);
 
@@ -446,7 +464,7 @@ export function ExportPanel(): React.ReactElement {
 
   return (
     <div style={S.root}>
-      <div style={S.title}>📤 내보내기 (v3.1)</div>
+      <div style={S.title}>📤 내보내기 (v3.1 Stable)</div>
 
       {!isCrossOriginIsolated && (
         <div style={{ ...S.warn, background: '#1a2233', borderColor: '#334466', color: '#88aadd' }}>
@@ -458,14 +476,14 @@ export function ExportPanel(): React.ReactElement {
 
       {!ffmpegReady ? (
         <button style={S.btnLoad} onClick={handleLoad} disabled={loadingEngine}>
-          {loadingEngine ? '⏳ FFmpeg + 폰트 로딩 중…' : '🔄 인코더 + 한글 폰트 로드'}
+          {loadingEngine ? '⏳ FFmpeg + 폰트 로드 중…' : '🔄 인코더 + 전문 폰트 로드'}
         </button>
       ) : (
         <div style={{ fontSize: 10 }}>
           <span style={{ color: '#50c878' }}>✅ FFmpeg</span>
           {' · '}
           <span style={{ color: fontReady ? '#50c878' : '#ffaa44' }}>
-            {fontReady ? '✅ 한글 폰트' : '⚠️ 폰트 없음 (자막 건너뜀)'}
+            {fontReady ? '✅ Static OTF 폰트' : '⚠️ 폰트 없음 (자막 건너뜀)'}
           </span>
         </div>
       )}

@@ -1,5 +1,5 @@
 /* ─── src/engines/exportEngine.ts ─── */
-/* B7 v3.1: drawtext 폰트 로딩 + 안정성 개선 */
+/* B7 v3.1: drawtext 폰트 URL 수정 + 인스턴스 초기화 지원 */
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL, fetchFile } from '@ffmpeg/util';
@@ -78,10 +78,10 @@ export const EXPORT_PRESETS: ExportPreset[] = [
   },
 ];
 
-/* ═══ 폰트 URL (Google Fonts CDN — Noto Sans KR, 한글+영문 지원) ═══ */
-const FONT_URL = 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/Variable/TTF/NotoSansCJKkr-VF.ttf';
+/* ═══ 폰트 URL (Subset OTF - freetype 호환용) ═══ */
+const FONT_URL = 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/SubsetOTF/KR/NotoSansKR-Regular.otf';
 const FONT_FALLBACK_URL = 'https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf';
-export const FONT_FILENAME = '/tmp/font.ttf';
+export const FONT_FILENAME = '/tmp/font.otf';
 
 /* ═══ 엔진 인터페이스 ═══ */
 
@@ -92,8 +92,10 @@ export interface ExportEngineApi {
   isFontLoaded(): boolean;
   loadSource(filename: string, src: string): Promise<void>;
   writeText(filename: string, content: string): Promise<void>;
+  writeRaw(filename: string, data: Uint8Array): Promise<void>;
   exec(args: string[]): Promise<number>;
   readOutput(filename: string): Promise<Uint8Array>;
+  readFileRaw(filename: string): Promise<Uint8Array | null>;
   cleanup(filenames: string[]): Promise<void>;
   terminate(): void;
   setProgressCallback(cb: ProgressCallback | null): void;
@@ -141,14 +143,12 @@ export function createExportEngine(): ExportEngineApi {
     async loadFont(): Promise<boolean> {
       if (fontLoaded) return true;
       try {
-        // 한글 폰트 시도
         const data = await fetchFile(FONT_URL);
         await ffmpeg.writeFile(FONT_FILENAME, data);
         fontLoaded = true;
         return true;
       } catch {
         try {
-          // 폴백: 영문 전용 폰트
           const data = await fetchFile(FONT_FALLBACK_URL);
           await ffmpeg.writeFile(FONT_FILENAME, data);
           fontLoaded = true;
@@ -170,13 +170,34 @@ export function createExportEngine(): ExportEngineApi {
       await ffmpeg.writeFile(filename, new TextEncoder().encode(content));
     },
 
+    async writeRaw(filename, data) {
+      await ffmpeg.writeFile(filename, data);
+    },
+
     async exec(args) {
-      execStart = performance.now();
-      return await ffmpeg.exec(args);
+      try {
+        execStart = performance.now();
+        return await ffmpeg.exec(args);
+      } catch (e: any) {
+        if (String(e).includes('Aborted')) {
+          console.warn('[ExportEngine] Aborted() caught — post-exec corruption check');
+          return -1;
+        }
+        throw e;
+      }
     },
 
     async readOutput(filename) {
       return await ffmpeg.readFile(filename) as Uint8Array;
+    },
+
+    async readFileRaw(filename) {
+      try {
+        const data = await ffmpeg.readFile(filename);
+        return data instanceof Uint8Array ? data : new TextEncoder().encode(data as string);
+      } catch {
+        return null;
+      }
     },
 
     async cleanup(filenames) {
@@ -191,6 +212,10 @@ export function createExportEngine(): ExportEngineApi {
 
     setProgressCallback(cb) { progressCb = cb; },
   };
+}
+
+export function createFreshEngine() {
+  return createExportEngine();
 }
 
 /* ═══ FFmpeg 인자 빌더 ═══ */
