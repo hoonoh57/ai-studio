@@ -267,10 +267,10 @@ export function PreviewArea() {
   ) {
     const kf = clip.keyframeTracks;
     const hasAnyKf = kf && kf.length > 0 && kf.some(t => t.enabled && t.keyframes.length > 0);
-    const kfX = interpolateKfValue(kf, 'x', relTime, 0);
-    const kfY = interpolateKfValue(kf, 'y', relTime, 0);
-    const kfScale = interpolateKfValue(kf, 'scale', relTime, 1);
-    const kfRotation = interpolateKfValue(kf, 'rotation', relTime, 0);
+    const kfX = interpolateKfValue(kf, 'x', relTime, clip.transform.x);
+    const kfY = interpolateKfValue(kf, 'y', relTime, clip.transform.y);
+    const kfScale = interpolateKfValue(kf, 'scale', relTime, clip.transform.scale);
+    const kfRotation = interpolateKfValue(kf, 'rotation', relTime, clip.transform.rotation);
     const kfOpacity = interpolateKfValue(kf, 'opacity', relTime, clip.opacity ?? 1);
     const kfBlur = interpolateKfValue(kf, 'blur', relTime, 0);
     const kfBrightness = interpolateKfValue(kf, 'brightness', relTime, 0);
