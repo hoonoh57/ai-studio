@@ -799,7 +799,7 @@ export function PreviewArea() {
     };
     rafId = requestAnimationFrame(drawOverlay);
     return () => cancelAnimationFrame(rafId);
-  }, [engine.overlay, safeZoneVisible, gridVisible]);
+  }, [engine.overlay, safeZoneVisible, gridVisible, projW, projH]);
 
   /* ═══ 컨트롤 핸들러 ═══ */
   const stepFrame = useCallback((dir: number) => {
