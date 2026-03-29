@@ -465,9 +465,9 @@ export function PreviewArea() {
       const trans = findTransitionAt(time);
       const hasKeyframes = clip?.keyframeTracks?.some(t => t.enabled && t.keyframes.length > 0);
       const hasFilters = clip?.filters && clip.filters.length > 0;
-      const useWebGPU = engine.isWebGPU && engine.compositor && !trans && clip && !hasKeyframes && !hasFilters;
+      const usePixi = engine.isGPU && engine.compositor && !trans && clip && !hasKeyframes && !hasFilters;
 
-      if (useWebGPU && clip) {
+      if (usePixi && clip) {
         // WebGPU 캔버스 표시, fallback 숨김
         if (gpuCanvasRef.current) gpuCanvasRef.current.style.display = 'block';
         if (fallbackCanvasRef.current) fallbackCanvasRef.current.style.display = 'none';
@@ -748,7 +748,7 @@ export function PreviewArea() {
 
     rafId = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafId);
-  }, [fps, engine.isWebGPU, engine.compositor]);
+  }, [fps, engine.isGPU, engine.compositor]);
 
   /* ═══ 오버레이 렌더링 ═══ */
   useEffect(() => {
@@ -849,13 +849,13 @@ export function PreviewArea() {
         {/* 레이어 1: WebGPU 캔버스 (비디오 프레임) */}
         <canvas
           ref={gpuCanvasRef}
-          style={{ position: 'absolute', display: engine.isWebGPU ? 'block' : 'none', background: CANVAS_BG }}
+          style={{ position: 'absolute', display: engine.isGPU ? 'block' : 'none', background: CANVAS_BG }}
         />
 
         {/* 레이어 2: Canvas2D 폴백 (키프레임, 이펙트, 전환, 텍스트) */}
         <canvas
           ref={fallbackCanvasRef}
-          style={{ position: 'absolute', display: engine.isWebGPU ? 'none' : 'block', background: CANVAS_BG }}
+          style={{ position: 'absolute', display: engine.isGPU ? 'none' : 'block', background: CANVAS_BG }}
         />
 
         {/* 레이어 3: 오버레이 캔버스 (안전구역, 그리드, 가이드, Transform 핸들) */}
@@ -865,7 +865,7 @@ export function PreviewArea() {
         />
 
         {/* GPU 없을 때 미표시 — 있으면 좌상단 배지 */}
-        {engine.isWebGPU && (
+        {engine.isGPU && (
           <div style={{
             position: 'absolute', top: 6, left: 6,
             background: 'rgba(0, 150, 0, 0.6)', color: '#fff',
