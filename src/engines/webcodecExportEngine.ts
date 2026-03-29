@@ -244,7 +244,17 @@ async function exportSingleClip(
   const videoTrack = await input.getPrimaryVideoTrack() as any;
   const srcW = videoTrack?.displayWidth ?? 0;
   const srcH = videoTrack?.displayHeight ?? 0;
-  const needsResize = (srcW !== preset.width || srcH !== preset.height);
+  
+  // 수정 (±2px 허용 + 가로세로 반전도 허용 — 회전 메타데이터 대응)
+  const sizesMatch = (
+    (Math.abs(srcW - preset.width) <= 2 && Math.abs(srcH - preset.height) <= 2) ||
+    (Math.abs(srcW - preset.height) <= 2 && Math.abs(srcH - preset.width) <= 2)  // 90°/270° 회전
+  );
+  const needsResize = !sizesMatch;
+
+  // 디버그: 실제 감지된 해상도 출력
+  onLog(`📐 소스 해상도: ${srcW}x${srcH} → 타겟: ${preset.width}x${preset.height} (needsResize=${needsResize})`);
+
   const needsTranscode = hasText || needsResize;
 
   if (needsTranscode) {
