@@ -1,5 +1,5 @@
 /* ─── src/components/Preview/usePreviewEngine.ts ─── */
-/* Preview 엔진 초기화/관리 React 훅 — v2 (초기화 실패 보강) */
+/* Preview 엔진 초기화/관리 React 훅 — v3 (overlay 즉시 생성) */
 
 import { useEffect, useRef, useState } from 'react';
 import { createPreviewRenderer, type PreviewRenderer } from '@/engine/core/RendererFactory';
@@ -45,13 +45,48 @@ export function usePreviewEngine(
 
         let destroyed = false;
 
-        const init = async () => {
+        /* ── 1단계: OverlayRenderer 즉시 생성 (GPU 무관) ── */
+        let overlay: OverlayRenderer | null = null;
+        if (overlayCanvasRef.current) {
             try {
-                const renderer = await createPreviewRenderer();
-                if (destroyed) { renderer.destroy(); return; }
+                overlay = new OverlayRenderer(overlayCanvasRef.current);
+                console.log('[PreviewEngine] OverlayRenderer 즉시 생성 완료');
+            } catch (e) {
+                console.warn('[PreviewEngine] OverlayRenderer 생성 실패:', e);
+            }
+        }
+
+        /* overlay가 있으면 바로 상태 업데이트 (안전구역/그리드 즉시 사용 가능) */
+        if (overlay && !destroyed) {
+            setState(prev => ({ ...prev, overlay }));
+        }
+
+        /* ── 2단계: GPU 렌더러 비동기 초기화 (타임아웃 포함) ── */
+        const initGPU = async () => {
+            try {
+                const timeoutPromise = new Promise<null>((resolve) =>
+                    setTimeout(() => resolve(null), 5000)
+                );
+                const rendererPromise = createPreviewRenderer();
+                const renderer = await Promise.race([rendererPromise, timeoutPromise]);
+
+                if (destroyed) {
+                    if (renderer) renderer.destroy();
+                    return;
+                }
+
+                if (!renderer) {
+                    console.warn('[PreviewEngine] GPU 초기화 타임아웃 (5초), Canvas2D 폴백');
+                    setState(prev => ({
+                        ...prev,
+                        tierLabel: 'CPU 렌더링',
+                        gpuName: 'Timeout',
+                        ready: true,
+                    }));
+                    return;
+                }
 
                 let compositor: WebGPUCompositor | null = null;
-
                 if (renderer.type === 'webgpu' && renderer.gpu && gpuCanvasRef.current) {
                     try {
                         compositor = new WebGPUCompositor({
@@ -60,57 +95,44 @@ export function usePreviewEngine(
                         });
                         console.log('[PreviewEngine] WebGPU Compositor 생성 성공');
                     } catch (e) {
-                        console.warn('[PreviewEngine] WebGPU Compositor 생성 실패, Canvas2D 폴백:', e);
+                        console.warn('[PreviewEngine] Compositor 실패, Canvas2D 폴백:', e);
                         compositor = null;
-                    }
-                }
-
-                let overlay: OverlayRenderer | null = null;
-                if (overlayCanvasRef.current) {
-                    try {
-                        overlay = new OverlayRenderer(overlayCanvasRef.current);
-                    } catch (e) {
-                        console.warn('[PreviewEngine] OverlayRenderer 생성 실패:', e);
                     }
                 }
 
                 const tierLabel = TIER_LABELS[renderer.capabilities.tier] || 'CPU 렌더링';
                 const gpuName = renderer.capabilities.gpuName || 'Unknown';
-
                 console.log(`[PreviewEngine] 초기화 완료 — ${tierLabel} (${gpuName})`);
 
                 if (!destroyed) {
-                    setState({
+                    setState(prev => ({
+                        ...prev,
                         renderer,
                         compositor,
-                        overlay,
                         isWebGPU: compositor !== null,
                         tierLabel,
                         gpuName,
                         ready: true,
-                    });
+                    }));
                 }
             } catch (e) {
-                console.error('[PreviewEngine] 초기화 전체 실패:', e);
+                console.error('[PreviewEngine] 초기화 실패:', e);
                 if (!destroyed) {
-                    setState({
-                        renderer: null,
-                        compositor: null,
-                        overlay: null,
-                        isWebGPU: false,
+                    setState(prev => ({
+                        ...prev,
                         tierLabel: 'CPU 렌더링',
-                        gpuName: 'None',
+                        gpuName: 'Error',
                         ready: true,
-                    });
+                    }));
                 }
             }
         };
 
-        init();
+        initGPU();
 
         return () => {
             destroyed = true;
-            setState((prev) => {
+            setState(prev => {
                 prev.compositor?.destroy();
                 prev.overlay?.destroy();
                 prev.renderer?.destroy();
